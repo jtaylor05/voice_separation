@@ -1,0 +1,13 @@
+scipy
+matplotlib
+pandas
+transformers
+datasets
+scikit-learn
+sacrebleu
+evaluate
+torch>=2.5.1 
+torchvision>=0.20.1
+torchcodec
+FFmpeg
+PySoundFile
