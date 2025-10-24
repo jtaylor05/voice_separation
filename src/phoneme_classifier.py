@@ -9,7 +9,7 @@ from huggingface_hub import login
 
 login()
 
-data = create_dataset(columns=["audio", "phonetic_detail", "ipa_transcription"])
+data = create_dataset(data_split="train[:1000]", columns=["audio", "phonetic_detail", "ipa_transcription"])
 
 make_vocab_file(data)
 
@@ -66,7 +66,7 @@ model = Wav2Vec2ForCTC.from_pretrained(
     pad_token_id=processor.tokenizer.pad_token_id,
     vocab_size=vocab_size,
     ignore_mismatched_sizes=True
-)
+).to("cuda")
 
 model.freeze_feature_encoder()
 
@@ -75,7 +75,7 @@ training_args = TrainingArguments(
   group_by_length=True,
   per_device_train_batch_size=32,
   #evaluation_strategy="steps",
-  num_train_epochs=1,
+  num_train_epochs=30,
   fp16=True,
   gradient_checkpointing=True, 
   save_steps=500,
@@ -99,4 +99,8 @@ trainer = Trainer(
 )
 
 trainer.train()
+<<<<<<< HEAD
 trainer.push_to_hub()
+=======
+
+>>>>>>> 8fed8ade50fe9889b15b29ab0320aae87a145950
