@@ -5,6 +5,9 @@ from torchcodec.decoders import AudioDecoder
 from data import create_dataset, DataCollatorCTCWithPadding
 from vocab_maker import make_vocab_file
 from evaluate import load
+from huggingface_hub import login
+
+login()
 
 data = create_dataset(columns=["audio", "phonetic_detail", "ipa_transcription"])
 
@@ -15,16 +18,6 @@ tokenizer = Wav2Vec2PhonemeCTCTokenizer("./vocab.json", unk_token="[UNK]", pad_t
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
-
-# def prepare_dataset(batch):
-#     audio = batch["audio"]
-
-#     # batched output is "un-batched" to ensure mapping is correct
-#     batch["input_values"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values[0]
-    
-#     with processor.as_target_processor():
-#         batch["labels"] = processor(batch["ipa_transcription"]).input_ids
-#     return batch
 
 def prepare_dataset(batch):
     audio = batch["audio"]
@@ -43,49 +36,10 @@ def prepare_dataset(batch):
         batch["labels"] = [item[0] for item in labels]
     else:
         batch["labels"] = labels
-    # with processor.as_target_processor():
-    #     # FIX 2: Get the actual input_ids without extra nesting
-    #     labels = processor(batch["ipa_transcription"]).input_ids
-    #     # If labels is a list of lists, flatten it
-    #     if isinstance(labels, list) and len(labels) > 0 and isinstance(labels[0], list):
-    #         batch["labels"] = labels[0]
-    #     else:
-    #         batch["labels"] = labels
     
     return batch
 
 prep_data = data.map(prepare_dataset, remove_columns=data.column_names["train"], num_proc=4)
-
-print("\n=== Data Structure Check ===")
-sample = prep_data["train"][0]
-
-print(f"\ninput_values:")
-print(f"  Type: {type(sample['input_values'])}")
-if hasattr(sample['input_values'], 'shape'):
-    print(f"  Shape: {sample['input_values'].shape}")
-    print(f"  Dtype: {sample['input_values'].dtype}")
-elif isinstance(sample['input_values'], list):
-    print(f"  Length: {len(sample['input_values'])}")
-    print(f"  First element type: {type(sample['input_values'][0])}")
-    # Check if it's nested
-    if isinstance(sample['input_values'][0], list):
-        print(f"  WARNING: Nested list detected!")
-        print(f"  First inner list length: {len(sample['input_values'][0])}")
-    else:
-        print(f"  Sample values: {sample['input_values'][:5]}")
-
-print(f"\nlabels:")
-print(f"  Type: {type(sample['labels'])}")
-if hasattr(sample['labels'], 'shape'):
-    print(f"  Shape: {sample['labels'].shape}")
-elif isinstance(sample['labels'], list):
-    print(f"  Length: {len(sample['labels'])}")
-    print(f"  Sample: {sample['labels'][:10]}")
-    # Check if it's nested
-    if len(sample['labels']) > 0 and isinstance(sample['labels'][0], list):
-        print(f"  WARNING: Nested list detected!")
-
-print("===========================\n")
 
 data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
 
@@ -131,6 +85,7 @@ training_args = TrainingArguments(
   weight_decay=0.005,
   warmup_steps=1000,
   save_total_limit=2,
+  label_names=["labels"]
 )
 
 trainer = Trainer(
@@ -144,3 +99,4 @@ trainer = Trainer(
 )
 
 trainer.train()
+trainer.push_to_hub()

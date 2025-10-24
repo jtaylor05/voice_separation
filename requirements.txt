@@ -11,3 +11,4 @@ torchvision>=0.20.1
 torchcodec[ffmpeg]
 jiwer
 accelerate
+ipywidgets

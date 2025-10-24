@@ -62,7 +62,7 @@ class DataCollatorCTCWithPadding:
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )
-        # with self.processor.tokenizer.pad():
+        
         labels_batch = self.processor.tokenizer.pad(
             label_features,
             padding=self.padding,
