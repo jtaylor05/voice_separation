@@ -6,7 +6,7 @@ from data import create_dataset, DataCollatorCTCWithPadding
 from vocab_maker import make_vocab_file
 from evaluate import load
 
-data = create_dataset(columns=["audio", "phonetic_detail", "ipa_transcription"])
+data = create_dataset(data_split="train[:1000]", columns=["audio", "phonetic_detail", "ipa_transcription"])
 
 make_vocab_file(data)
 
@@ -92,6 +92,7 @@ data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
 cer = load("cer")
 
 def compute_metrics(pred):
+    print(hasattr(pred['labels']))
     pred_logits = pred.predictions
     pred_ids = np.argmax(pred_logits, axis=-1)
 
@@ -112,7 +113,7 @@ model = Wav2Vec2ForCTC.from_pretrained(
     pad_token_id=processor.tokenizer.pad_token_id,
     vocab_size=vocab_size,
     ignore_mismatched_sizes=True
-)
+).to("cuda")
 
 model.freeze_feature_encoder()
 
@@ -121,7 +122,7 @@ training_args = TrainingArguments(
   group_by_length=True,
   per_device_train_batch_size=32,
   #evaluation_strategy="steps",
-  num_train_epochs=1,
+  num_train_epochs=30,
   fp16=True,
   gradient_checkpointing=True, 
   save_steps=500,
@@ -131,6 +132,7 @@ training_args = TrainingArguments(
   weight_decay=0.005,
   warmup_steps=1000,
   save_total_limit=2,
+  label_names=["labels"]
 )
 
 trainer = Trainer(
@@ -144,3 +146,4 @@ trainer = Trainer(
 )
 
 trainer.train()
+
