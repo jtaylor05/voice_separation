@@ -70,8 +70,10 @@ model = Wav2Vec2ForCTC.from_pretrained(
 
 model.freeze_feature_encoder()
 
+repo_name = "phon-finetuned"
+
 training_args = TrainingArguments(
-  #output_dir=repo_name,
+  output_dir=repo_name,
   group_by_length=True,
   per_device_train_batch_size=32,
   #evaluation_strategy="steps",
@@ -100,4 +102,36 @@ trainer = Trainer(
 
 trainer.train()
 trainer.push_to_hub()
+
+processor = Wav2Vec2Processor.from_pretrained(repo_name)
+model = Wav2Vec2ForCTC.from_pretrained(repo_name)
+
+def map_to_result(batch):
+  with torch.no_grad():
+    input_values = torch.tensor(batch["input_values"], device="cuda").unsqueeze(0)
+    logits = model(input_values).logits
+
+  pred_ids = torch.argmax(logits, dim=-1)
+  batch["pred_str"] = processor.batch_decode(pred_ids)[0]
+  batch["text"] = processor.decode(batch["labels"], group_tokens=False)
+  
+  return batch
+
+def show_random_elements(dataset, num_examples=10):
+    assert num_examples <= len(dataset), "Can't pick more elements than there are in the dataset."
+    picks = []
+    for _ in range(num_examples):
+        pick = random.randint(0, len(dataset)-1)
+        while pick in picks:
+            pick = random.randint(0, len(dataset)-1)
+        picks.append(pick)
+    
+    df = pd.DataFrame(dataset[picks])
+    display(HTML(df.to_html()))
+
+results = timit["test"].map(map_to_result, remove_columns=timit["test"].column_names)
+
+print("Test WER: {:.3f}".format(cer.compute(predictions=results["pred_str"], references=results["text"])))
+
+show_random_elements(results.remove_columns(["speech", "sampling_rate"]))
 
