@@ -70,7 +70,7 @@ model = Wav2Vec2ForCTC.from_pretrained(
 
 model.freeze_feature_encoder()
 
-repo_name = "phon-finetuned"
+repo_name = "jttaylor01/phon-finetuned"
 
 training_args = TrainingArguments(
   output_dir=repo_name,
