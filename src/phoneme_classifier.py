@@ -99,8 +99,5 @@ trainer = Trainer(
 )
 
 trainer.train()
-<<<<<<< HEAD
 trainer.push_to_hub()
-=======
 
->>>>>>> 8fed8ade50fe9889b15b29ab0320aae87a145950
