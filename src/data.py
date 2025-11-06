@@ -9,6 +9,26 @@ def create_dataset(data_path = "kylelovesllms/timit_asr_ipa", data_split="train[
     data = data.select_columns(list(columns))
     return data.cast_column(audio_columns, Audio(sampling_rate=sr))
 
+def prepare_dataset(batch, processor):
+    audio = batch["audio"]
+
+    # FIX 1: Remove [0] indexing - this was causing nested structure
+    processed = processor(audio["array"], sampling_rate=audio["sampling_rate"])
+    
+    if isinstance(processed.input_values, list) and len(processed.input_values) > 0:
+        batch["input_values"] = processed.input_values[0]
+    else:
+        batch["input_values"] = processed.input_values
+    
+    
+    labels = processor.tokenizer(batch["ipa_transcription"]).input_ids
+    if isinstance(labels, list) and len(labels) > 0 and isinstance(labels[0], list):
+        batch["labels"] = [item[0] for item in labels]
+    else:
+        batch["labels"] = labels
+    
+    return batch
+
 class DataCollatorCTCWithPadding:
     """
     Data collator that will dynamically pad the inputs received.

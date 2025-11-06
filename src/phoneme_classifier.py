@@ -2,10 +2,11 @@ from datasets import load_dataset, Audio
 from transformers import Trainer, TrainingArguments, Wav2Vec2ForCTC, Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2Model, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 import torch
 from torchcodec.decoders import AudioDecoder
-from data import create_dataset, DataCollatorCTCWithPadding
+from data import create_dataset, prepare_dataset, DataCollatorCTCWithPadding
 from vocab_maker import make_vocab_file
 from evaluate import load
 from huggingface_hub import login
+import numpy as np
 
 login()
 
@@ -19,27 +20,7 @@ feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000
 
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
-def prepare_dataset(batch):
-    audio = batch["audio"]
-
-    # FIX 1: Remove [0] indexing - this was causing nested structure
-    processed = processor(audio["array"], sampling_rate=audio["sampling_rate"])
-    
-    if isinstance(processed.input_values, list) and len(processed.input_values) > 0:
-        batch["input_values"] = processed.input_values[0]
-    else:
-        batch["input_values"] = processed.input_values
-    
-    
-    labels = tokenizer(batch["ipa_transcription"]).input_ids
-    if isinstance(labels, list) and len(labels) > 0 and isinstance(labels[0], list):
-        batch["labels"] = [item[0] for item in labels]
-    else:
-        batch["labels"] = labels
-    
-    return batch
-
-prep_data = data.map(prepare_dataset, remove_columns=data.column_names["train"], num_proc=4)
+prep_data = data.map(prepare_dataset, remove_columns=data.column_names["train"], num_proc=4, fn_kwargs={"processor":processor})
 
 data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
 
@@ -102,6 +83,7 @@ trainer = Trainer(
 
 trainer.train()
 trainer.push_to_hub()
+trainer.evaluate()
 
 processor = Wav2Vec2Processor.from_pretrained(repo_name)
 model = Wav2Vec2ForCTC.from_pretrained(repo_name)
@@ -129,9 +111,9 @@ def show_random_elements(dataset, num_examples=10):
     df = pd.DataFrame(dataset[picks])
     display(HTML(df.to_html()))
 
-results = timit["test"].map(map_to_result, remove_columns=timit["test"].column_names)
+results = prep_data["test"].map(map_to_result, remove_columns=prep_data["test"].column_names)
 
-print("Test WER: {:.3f}".format(cer.compute(predictions=results["pred_str"], references=results["text"])))
+print("Test CER: {:.3f}".format(cer.compute(predictions=results["pred_str"], references=results["text"])))
 
 show_random_elements(results.remove_columns(["speech", "sampling_rate"]))
 
