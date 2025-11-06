@@ -103,8 +103,21 @@ trainer = Trainer(
 trainer.train()
 trainer.push_to_hub()
 
-processor = Wav2Vec2Processor.from_pretrained(repo_name)
-model = Wav2Vec2ForCTC.from_pretrained(repo_name)
+from huggingface_hub import HfApi
+
+hf_api = HfApi()
+
+try:
+    hf_api.repo_info(repo_id=repo_name)
+    print(f"Repository '{repo_name}' exists.")
+except:
+    print(f"Repository '{repo_name}' does not exist or is private and you lack access.")
+
+#print("Opening Repo: ", repo_name)
+#processor = Wav2Vec2Processor.from_pretrained(repo_name)
+#print("Repo Processor :", processor)
+#model = Wav2Vec2ForCTC.from_pretrained(repo_name)
+#print("Repo Model: ", model)
 
 def map_to_result(batch):
   with torch.no_grad():
@@ -129,7 +142,7 @@ def show_random_elements(dataset, num_examples=10):
     df = pd.DataFrame(dataset[picks])
     display(HTML(df.to_html()))
 
-results = timit["test"].map(map_to_result, remove_columns=timit["test"].column_names)
+results = data["test"].map(map_to_result, remove_columns=data["test"].column_names)
 
 print("Test WER: {:.3f}".format(cer.compute(predictions=results["pred_str"], references=results["text"])))
 
