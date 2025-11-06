@@ -40,7 +40,9 @@ def compute_metrics(pred):
     # we do not want to group tokens when computing the metrics
     label_str = processor.batch_decode(pred.label_ids, group_tokens=False)
 
-    cer = cer.compute(predictions=pred_str, references=label_str)
+    cer_metric = load("cer")
+    
+    cer = cer_metric.compute(predictions=pred_str, references=label_str)
 
     return {"cer": cer}
 
