@@ -14,7 +14,11 @@ data = create_dataset(data_split="train[:1000]", columns=["audio", "phonetic_det
 
 make_vocab_file(data)
 
+repo_name = "jttaylor01/phon-finetuned"
+
 tokenizer = Wav2Vec2PhonemeCTCTokenizer("./vocab.json", unk_token="[UNK]", pad_token="[PAD]", word_delimiter_token="|", do_phonemize=False)
+
+tokenizer.push_to_hub(repo_name)
 
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=False)
 
@@ -50,8 +54,6 @@ model = Wav2Vec2ForCTC.from_pretrained(
 ).to("cuda")
 
 model.freeze_feature_encoder()
-
-repo_name = "jttaylor01/phon-finetuned"
 
 training_args = TrainingArguments(
   output_dir=repo_name,

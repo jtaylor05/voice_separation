@@ -65,13 +65,13 @@ def show_cer(model, dataset):
     print("Test CER: {:.3f}".format(cer_metric.compute(predictions=results["pred_str"], references=results["text"])))
 
 if __name__ == "__main__":
-    login()
-    
     args = sys.argv
     if len(args) != 2:
         raise SystemError("No Input Error") 
     
     model_name = args[1]
+    
+    processor = Wav2Vec2Processor.from_pretrained(model_name)
     
     data = create_dataset(data_split="train[:1000]", columns=["audio", "phonetic_detail", "ipa_transcription"])
     prep_data = data.map(prepare_dataset, remove_columns=data.column_names["train"], num_proc=4, fn_kwargs={"processor":processor})
