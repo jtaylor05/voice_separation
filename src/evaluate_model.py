@@ -1,5 +1,5 @@
 from datasets import load_dataset, Audio
-from transformers import Trainer, TrainingArguments, Wav2Vec2ForCTC, Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2Model, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
+from transformers import Trainer, TrainingArguments, Wav2Vec2ForCTC, Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2Model, Wav2Vec2FeatureExtractor, Wav2Vec2Processor, AutoTokenizer, AutoFeatureExtractor
 import torch
 from torchcodec.decoders import AudioDecoder
 from data import create_dataset, prepare_dataset, DataCollatorCTCWithPadding
@@ -66,15 +66,17 @@ def show_cer(model, dataset):
 
 if __name__ == "__main__":
     args = sys.argv
-    if len(args) != 2:
-        raise SystemError("No Input Error") 
+    # if len(args) != 2:
+    #     raise SystemError("No Input Error") 
     
     model_name = args[1]
     
-    tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(model_name)
-    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
+    # tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(model_name)
+    # feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained("jttaylor01/phon-finetuned")
+    feature_extractor = AutoFeatureExtractor.from_pretrained("jttaylor01/phon-finetuned")
     processor = Wav2Vec2Processor(feature_extractor, tokenizer)
-    processor = Wav2Vec2Processor.from_pretrained(model_name)
+    # processor = Wav2Vec2Processor.from_pretrained(model_name)
     data = create_dataset(data_split="train[:1000]", columns=["audio", "phonetic_detail", "ipa_transcription"])
     
     prep_data = data.map(prepare_dataset, remove_columns=data.column_names["train"], num_proc=4, fn_kwargs={"processor":processor})
