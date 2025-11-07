@@ -12,3 +12,4 @@ torchcodec[ffmpeg]
 jiwer
 accelerate
 ipywidgetsprotobuf
+phonemizer
