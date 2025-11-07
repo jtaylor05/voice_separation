@@ -71,9 +71,12 @@ if __name__ == "__main__":
     
     model_name = args[1]
     
+    tokenizer = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(model_name)
+    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
+    processor = Wav2Vec2Processor(feature_extractor, tokenizer)
     processor = Wav2Vec2Processor.from_pretrained(model_name)
-    
     data = create_dataset(data_split="train[:1000]", columns=["audio", "phonetic_detail", "ipa_transcription"])
+    
     prep_data = data.map(prepare_dataset, remove_columns=data.column_names["train"], num_proc=4, fn_kwargs={"processor":processor})
     
     evaluate_cer(model_name, prep_data)
