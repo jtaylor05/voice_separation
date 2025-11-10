@@ -123,7 +123,7 @@ class HuBERTForPhonemeClassification(nn.Module):
             labels: (batch, target_length) - phoneme IDs
             label_lengths: (batch,) - actual length of each label sequence
         """
-        print(input_values, attention_mask, sep="\n")
+        #print(input_values, attention_mask, sep="\n")
         # Get HuBERT hidden states
         outputs = self.hubert(
             input_values,
@@ -214,13 +214,16 @@ class SlidingWindowDataCollator:
         
         for feature in features:
             audio = feature['audio']['array']
-            print(audio)
+            #print(audio)
             
+            if len(audio) < self.window_size:
+                audio = np.pad(audio, (0, self.window_size - len(audio)))
+
             # Apply sliding windows if audio is longer than window_size
-            if len(audio) > self.window_size:
-                windows = self._create_windows(audio)
+            #if len(audio) > self.window_size:
+                #windows = self._create_windows(audio)
                 # For now, use first window (can be extended for full processing)
-                audio = windows[0]
+                #audio = windows[0]
             
             input_features.append(audio)
             
@@ -318,7 +321,7 @@ def setup_training(
         logging_steps=100,
         learning_rate=3e-4,
         warmup_steps=1,
-        max_steps=10000,
+        max_steps=100,
         fp16=True,  # For faster training
         push_to_hub=False,
         report_to=["tensorboard"],
@@ -456,6 +459,7 @@ def main():
     
     # Cast audio to correct sampling rate
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+    sample = dataset["train"][0]
     print("Audio shape:", sample["audio"]["array"].shape)
     print("Audio length:", len(sample["audio"]["array"]))
     print("Sample rate:", sample["audio"]["sampling_rate"])
