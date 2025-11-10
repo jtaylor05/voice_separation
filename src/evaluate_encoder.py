@@ -287,9 +287,11 @@ def evaluate_model(
     # Process in batches
     for i in range(0, len(test_dataset), batch_size):
         batch = test_dataset[i:i + batch_size]
-        
+       
+        #print(batch)
+
         # Prepare audio inputs
-        audio_arrays = [sample['audio']['array'] for sample in batch]
+        audio_arrays = [sample['array'] for sample in batch['audio']]
         inputs = processor(
             audio_arrays,
             sampling_rate=16000,
@@ -308,8 +310,9 @@ def evaluate_model(
         
         # Get references
         references = []
-        for sample in batch:
+        for sample in batch['phonetic_detail']:
             # Parse reference phonemes from dataset
+            #print(batch, sample, sep="\n")
             ref_phonemes = parse_reference_phonemes(sample, vocab)
             references.append(ref_phonemes)
         
@@ -361,7 +364,7 @@ def parse_reference_phonemes(sample: Dict, vocab) -> str:
     """
     if 'phonetic_detail' in sample:
         phonemes = []
-        for phone_info in sample['phonetic_detail']:
+        for phone_info in sample:
             phone = phone_info.get('utterance', '[UNK]')
             # Map to IPA if needed
             phonemes.append(phone)
