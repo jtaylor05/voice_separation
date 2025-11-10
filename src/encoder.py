@@ -448,6 +448,11 @@ def main():
     # Load dataset
     print("Loading TIMIT dataset...")
     dataset = load_dataset("kylelovesllms/timit_asr_ipa")
+    sample = dataset["train"][0]
+    print("Audio shape:", sample["audio"]["array"].shape)
+    print("Audio length:", len(sample["audio"]["array"]))
+    print("Sample rate:", sample["audio"]["sampling_rate"])
+    print("Duration (seconds):", len(sample["audio"]["array"]) / sample["audio"]["sampling_rate"])
     
     # Cast audio to correct sampling rate
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
