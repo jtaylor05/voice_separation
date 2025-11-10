@@ -72,6 +72,75 @@ class PhonemeVocabulary:
         """Convert list of IDs to phonemes"""
         return [self.decode(tid) for tid in token_ids]
 
+class PhonemeVocabularyARPABET:
+    """TIMIT ARPABET phoneme set (39 phonemes + special tokens)"""
+    
+    # Core TIMIT phoneme set (39 phones after reduction)
+    PHONEMES = [
+        # Vowels (15)
+        'iy', 'ih', 'eh', 'ae', 'ah', 'aw', 'ay', 'ey', 'oy', 
+        'ow', 'uh', 'uw', 'er', 'ao', 'aa',
+        
+        # Consonants (24)
+        'b', 'd', 'g', 'p', 't', 'k',  # Stops
+        'jh', 'ch',  # Affricates
+        's', 'sh', 'z', 'zh', 'f', 'th', 'v', 'dh', 'hh',  # Fricatives
+        'm', 'n', 'ng',  # Nasals
+        'l', 'r', 'w', 'y',  # Semivowels/Liquids
+    ]
+    
+    SPECIAL_TOKENS = [
+        '[PAD]', '[UNK]', '[SIL]', '[SPN]', '[CTC]'
+    ]
+    
+    def __init__(self):
+        self.phonemes = self.SPECIAL_TOKENS + self.PHONEMES
+        self.phoneme_to_id = {p: i for i, p in enumerate(self.phonemes)}
+        self.id_to_phoneme = {i: p for p, i in self.phoneme_to_id.items()}
+        self.vocab_size = len(self.phonemes)
+        self.pad_token_id = self.phoneme_to_id['[PAD]']
+        self.unk_token_id = self.phoneme_to_id['[UNK]']
+        self.ctc_token_id = self.phoneme_to_id['[CTC]']
+    
+    def encode(self, phoneme: str) -> int:
+        """Convert phoneme to ID"""
+        return self.phoneme_to_id.get(phoneme.lower(), self.unk_token_id)
+    
+    def decode(self, token_id: int) -> str:
+        """Convert ID to phoneme"""
+        return self.id_to_phoneme.get(token_id, '[UNK]')
+    
+    def batch_decode(self, token_ids: List[int]) -> List[str]:
+        """Convert list of IDs to phonemes"""
+        return [self.decode(tid) for tid in token_ids]
+    
+    def normalize_timit_phone(self, phone: str) -> str:
+        """
+        Normalize TIMIT phoneme variants to base set
+        Maps 61-phone set to 39-phone set
+        """
+        mapping = {
+            'ix': 'ih',    # merge to ih
+            'ax': 'ah',    # merge to ah
+            'ax-h': 'ah',
+            'ux': 'uw',    # merge to uw
+            'axr': 'er',   # merge to er
+            'el': 'l',     # syllabic l
+            'em': 'm',     # syllabic m
+            'en': 'n',     # syllabic n
+            'eng': 'ng',   # syllabic ng
+            'nx': 'n',     # flap
+            'dx': 't',     # flap
+            'q': 't',      # glottal stop
+            'hv': 'hh',    # merge to hh
+            'bcl': 'b', 'dcl': 'd', 'gcl': 'g',
+            'pcl': 'p', 'tcl': 't', 'kcl': 'k',
+            'h#': '[SIL]', 'pau': '[SIL]', 'epi': '[SPN]',
+            'sil': '[SIL]', 'spn': '[SPN]'
+        }
+        phone_lower = phone.lower()
+        return mapping.get(phone_lower, phone_lower)
+
 
 # ============================================================================
 # 2. MODEL ARCHITECTURE
@@ -186,7 +255,7 @@ class SlidingWindowDataCollator:
     def __init__(
         self,
         processor: Wav2Vec2Processor,
-        vocab: PhonemeVocabulary,
+        vocab: PhonemeVocabularyARPABET,
         window_size_ms: int = 100,
         overlap_frames: int = 100,
         sampling_rate: int = 16000,
@@ -265,25 +334,14 @@ class SlidingWindowDataCollator:
         return windows
     
     def _parse_phoneme_sequence(self, feature: Dict) -> List[str]:
-        """
-        Parse IPA phoneme sequence from TIMIT dataset
-        Adapt this based on actual dataset structure
-        """
-        # TIMIT typically has 'phonetic_detail' with timing
-        # For CTC, we just need the sequence of phonemes
-        if 'phonetic_detail' in feature:
-            # Extract phonemes in order
+        if 'phonetic_detail' in feature and feature['phonetic_detail']:
             phonemes = []
             for phone_info in feature['phonetic_detail']:
-                phone = phone_info['utterance']  # Adjust based on actual structure
-                # Map TIMIT phonemes to IPA if needed
-                phonemes.append(self._map_timit_to_ipa(phone))
-            return phonemes
-        elif 'ipa' in feature:
-            # If IPA transcription is directly available
-            return list(feature['ipa'])  # Adjust parsing as needed
-        else:
-            return ['[UNK]']
+                phone = phone_info.get('utterance', '[UNK]')
+                normalized = self.vocab.normalize_timit_phone(phone)  # Use vocab's normalize method
+                phonemes.append(normalized)
+            return phonemes if phonemes else ['[UNK]']
+        return ['[UNK]']
     
     def _map_timit_to_ipa(self, timit_phone: str) -> str:
         """Map TIMIT phoneme notation to IPA (customize as needed)"""
@@ -350,7 +408,7 @@ class RealtimePhonemeClassifier:
         self,
         model: HuBERTForPhonemeClassification,
         processor: Wav2Vec2Processor,
-        vocab: PhonemeVocabulary,
+        vocab: PhonemeVocabularyARPABET,
         device: str = "cuda" if torch.cuda.is_available() else "cpu"
     ):
         self.model = model.to(device).eval()
@@ -434,7 +492,7 @@ def main():
     """Example usage of the pipeline"""
     
     # Initialize vocabulary
-    vocab = PhonemeVocabulary()
+    vocab = PhonemeVocabularyARPABET()
     print(f"Vocabulary size: {vocab.vocab_size}")
     
     # Initialize processor (using Wav2Vec2 processor for compatibility)
