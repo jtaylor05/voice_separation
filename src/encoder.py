@@ -10,7 +10,8 @@ from transformers import (
     HubertConfig,
     Wav2Vec2Processor,
     Trainer,
-    TrainingArguments
+    TrainingArguments,
+    EarlyStoppingCallback
 )
 from datasets import load_dataset, Audio
 from dataclasses import dataclass
@@ -384,6 +385,9 @@ def setup_training(
         report_to=["tensorboard"],
         remove_unused_columns=False,
         dataloader_num_workers=4,
+        load_best_model_at_end=True,
+        metric_for_best_model="f1",
+        early_stopping_patience=3,  # Stop if no improvement after 3 evaluations
     )
     
     trainer = Trainer(
@@ -392,6 +396,7 @@ def setup_training(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
+        callbacks=[EarlyStoppingCallback],
     )
     
     return trainer
