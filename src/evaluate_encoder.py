@@ -3,7 +3,7 @@ Loading and Evaluating Trained HuBERT Phoneme Classifier
 Includes CER, PER, and other phoneme-level metrics
 """
 
-import torch
+import torch, os
 import torch.nn as nn
 from transformers import Wav2Vec2Processor
 from datasets import load_dataset, Audio
@@ -43,10 +43,25 @@ def load_trained_model(
         freeze_base_model=False
     )
     
-    # Load trained weights
-    state_dict = torch.load(f"{model_path}/pytorch_model.bin", map_location=device)
-    model.load_state_dict(state_dict)
+    safetensors_path = os.path.join(model_path, "model.safetensors")
+    pytorch_path = os.path.join(model_path, "pytorch_model.bin")
     
+    if os.path.exists(safetensors_path):
+        # Load from safetensors format (newer default)
+        from safetensors.torch import load_file
+        state_dict = load_file(safetensors_path)
+        print(f"Loading from safetensors: {safetensors_path}")
+    elif os.path.exists(pytorch_path):
+        # Load from pytorch format (older default)
+        state_dict = torch.load(pytorch_path, map_location=device)
+        print(f"Loading from pytorch: {pytorch_path}")
+    else:
+        raise FileNotFoundError(
+            f"No model file found in {model_path}. "
+            f"Expected either 'model.safetensors' or 'pytorch_model.bin'"
+        )
+    
+    model.load_state_dict(state_dict)
     model = model.to(device)
     model.eval()
     
