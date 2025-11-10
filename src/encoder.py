@@ -123,6 +123,7 @@ class HuBERTForPhonemeClassification(nn.Module):
             labels: (batch, target_length) - phoneme IDs
             label_lengths: (batch,) - actual length of each label sequence
         """
+        print(input_values, attention_mask, sep="\n")
         # Get HuBERT hidden states
         outputs = self.hubert(
             input_values,
@@ -213,6 +214,7 @@ class SlidingWindowDataCollator:
         
         for feature in features:
             audio = feature['audio']['array']
+            print(audio)
             
             # Apply sliding windows if audio is longer than window_size
             if len(audio) > self.window_size:
