@@ -155,6 +155,7 @@ class HuBERTForPhonemeClassification(nn.Module):
         vocab_size: int,
         hubert_model_name: str = "facebook/hubert-base-ls960",
         freeze_feature_encoder: bool = True,
+        drop_out : float = 0.3,
         freeze_base_model: bool = False
     ):
         super().__init__()
@@ -172,7 +173,7 @@ class HuBERTForPhonemeClassification(nn.Module):
                 param.requires_grad = False
         
         # CTC Classification head
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(drop_out)
         self.classifier = nn.Linear(self.hubert.config.hidden_size, vocab_size)
         
         # CTC Loss
@@ -370,23 +371,24 @@ def setup_training(
     
     training_args = TrainingArguments(
         output_dir=output_dir,
-        per_device_train_batch_size=8,
+        per_device_train_batch_size=4,
         per_device_eval_batch_size=8,
         gradient_accumulation_steps=2,
         eval_strategy="steps",
         eval_steps=500,
         save_steps=1000,
         logging_steps=100,
-        learning_rate=3e-4,
+        learning_rate=1e-4,
         warmup_steps=500,
         max_steps=10000,
         fp16=True,  # For faster training
+        optim="adamw_torch",
         push_to_hub=False,
         report_to=["tensorboard"],
         remove_unused_columns=False,
         dataloader_num_workers=4,
         load_best_model_at_end=True,
-        metric_for_best_model="f1",
+        metric_for_best_model="eval_loss",
     )
     
     trainer = Trainer(

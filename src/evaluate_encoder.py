@@ -364,6 +364,7 @@ def parse_reference_phonemes(sample: Dict, vocab) -> str:
     """
     if 'phonetic_detail' in sample:
         phonemes = []
+        print(sample)
         for phone_info in sample:
             phone = phone_info.get('utterance', '[UNK]')
             # Map to IPA if needed
@@ -384,8 +385,8 @@ def main():
     """Complete example of loading and evaluating"""
     
     # 1. Setup vocabulary (same as training)
-    from encoder import PhonemeVocabulary
-    vocab = PhonemeVocabulary()
+    from encoder import PhonemeVocabularyARPABET
+    vocab = PhonemeVocabularyARPABET()
     
     # 2. Load processor
     processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
@@ -400,6 +401,27 @@ def main():
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
     test_dataset = dataset['test']
     
+    test_audio = dataset['test'][0]['audio']['array']
+    print(test_audio)
+    inputs = processor(test_audio, sampling_rate=16000, return_tensors="pt").to("cuda")
+    
+    with torch.no_grad():
+        outputs = model(**inputs)
+        logits = outputs['logits']
+        probs = torch.softmax(logits, dim=-1)
+    
+    # Check entropy - low entropy means it's overconfident
+    entropy = -(probs * torch.log(probs + 1e-10)).sum(dim=-1).mean()
+    print(f"Average entropy: {entropy:.3f}")
+    print(f"Max entropy possible: {torch.log(torch.tensor(vocab.vocab_size)):.3f}")
+
+    # Check which phonemes it ever predicts
+    predictions = torch.argmax(logits, dim=-1).flatten()
+    unique_preds = torch.unique(predictions)
+    print(f"Unique phonemes predicted: {len(unique_preds)} out of {vocab.vocab_size}")
+    for pred_id in unique_preds[:10]:
+        print(f"  - {vocab.decode(pred_id.item())}")
+
     # 5. Evaluate
     results = evaluate_model(
         model=model,
