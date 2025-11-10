@@ -387,7 +387,6 @@ def setup_training(
         dataloader_num_workers=4,
         load_best_model_at_end=True,
         metric_for_best_model="f1",
-        early_stopping_patience=3,  # Stop if no improvement after 3 evaluations
     )
     
     trainer = Trainer(
@@ -396,7 +395,7 @@ def setup_training(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        callbacks=[EarlyStoppingCallback],
+        callbacks=[EarlyStoppingCallback(3)],
     )
     
     return trainer
