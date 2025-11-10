@@ -318,7 +318,7 @@ def setup_training(
         warmup_steps=500,
         max_steps=10000,
         fp16=True,  # For faster training
-        push_to_hub=True,
+        push_to_hub=False,
         report_to=["tensorboard"],
         remove_unused_columns=False,
         dataloader_num_workers=4,
@@ -445,7 +445,7 @@ def main():
     
     # Load dataset
     print("Loading TIMIT dataset...")
-    dataset = load_dataset("kylelovestimit/timit_asr_ipa")
+    dataset = load_dataset("kylelovesllms/timit_asr_ipa")
     
     # Cast audio to correct sampling rate
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
