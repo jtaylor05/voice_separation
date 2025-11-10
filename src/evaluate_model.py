@@ -1,5 +1,5 @@
 from datasets import load_dataset, Audio
-from transformers import Trainer, TrainingArguments, Wav2Vec2ForCTC, Wav2Vec2PhonemeCTCTokenizer, Wav2Vec2Model, Wav2Vec2FeatureExtractor, Wav2Vec2Processor, AutoTokenizer, AutoFeatureExtractor, AutoProcessor, AutoModel
+from transformers import Trainer, TrainingArguments, Wav2Vec2ForCTC, HuBERTForPhonemeClassification, Wav2Vec2Processor, AutoTokenizer, AutoFeatureExtractor, AutoProcessor, AutoModel
 import torch
 from torchcodec.decoders import AudioDecoder
 from data import create_dataset, prepare_dataset, DataCollatorCTCWithPadding
@@ -29,7 +29,7 @@ def prepare_compute_metrics(processor):
     return compute_metrics
 
 def evaluate_cer(model, dataset):
-    processor = AutoProcessor.from_pretrained(model)
+    processor = Wav2Vec2Processor.from_pretrained(model)
     model = AutoModel.from_pretrained(model)
     
     trainer = Trainer(

@@ -17,9 +17,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 import numpy as np
 
-from evaluate_model import evaluate_cer, show_cer
-
-
 # ============================================================================
 # 1. PHONEME VOCABULARY SETUP
 # ============================================================================
@@ -501,9 +498,6 @@ def main():
     for i, result in enumerate(results):
         print(f"Window {i}: {result['predicted_phoneme']} "
               f"(confidence: {result['top_predictions'][0][1]:.3f})")
-    
-    evaluate_cer("phon-embedder", dataset)
-    show_cer("phon-embedder", dataset)
 
 
 if __name__ == "__main__":
