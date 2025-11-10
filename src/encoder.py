@@ -270,8 +270,8 @@ class SlidingWindowDataCollator:
         if 'phonetic_detail' in feature:
             # Extract phonemes in order
             phonemes = []
-            for phone_info in feature['phonetic_detail']['utterance']:
-                phone = phone_info  # Adjust based on actual structure
+            for phone_info in feature['phonetic_detail']:
+                phone = phone_info['utterance']  # Adjust based on actual structure
                 # Map TIMIT phonemes to IPA if needed
                 phonemes.append(self._map_timit_to_ipa(phone))
             return phonemes
@@ -311,11 +311,11 @@ def setup_training(
         per_device_eval_batch_size=8,
         gradient_accumulation_steps=2,
         eval_strategy="steps",
-        eval_steps=500,
+        eval_steps=1,
         save_steps=1000,
         logging_steps=100,
         learning_rate=3e-4,
-        warmup_steps=500,
+        warmup_steps=1,
         max_steps=10000,
         fp16=True,  # For faster training
         push_to_hub=False,
