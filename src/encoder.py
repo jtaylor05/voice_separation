@@ -456,6 +456,10 @@ def main():
     
     # Cast audio to correct sampling rate
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+    print("Audio shape:", sample["audio"]["array"].shape)
+    print("Audio length:", len(sample["audio"]["array"]))
+    print("Sample rate:", sample["audio"]["sampling_rate"])
+    print("Duration (seconds):", len(sample["audio"]["array"]) / sample["audio"]["sampling_rate"])
     
     # Initialize data collator
     data_collator = SlidingWindowDataCollator(
