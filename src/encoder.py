@@ -450,7 +450,7 @@ def setup_training(
         eval_strategy="steps",
         eval_steps=500,
         save_steps=1000,
-        logging_steps=50,
+        logging_steps=100,
         learning_rate=5e-5,  # Reduced from 1e-4
         warmup_steps=1000,
         max_steps=15000,
@@ -462,7 +462,7 @@ def setup_training(
         remove_unused_columns=False,
         dataloader_num_workers=4,
         load_best_model_at_end=True,
-        metric_for_best_model="phoneme_error_rate",
+        metric_for_best_model="eval_loss",
         greater_is_better=False,
     )
     
@@ -531,8 +531,8 @@ def setup_training(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        compute_metrics=compute_metrics_wrapper,
-        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+        #compute_metrics=compute_metrics_wrapper,
+        #preprocess_logits_for_metrics=preprocess_logits_for_metrics,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
     )
     
