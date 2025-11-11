@@ -76,12 +76,14 @@ class PhonemeVocabulary:
 class PhonemeVocabularyARPABET:
     """TIMIT ARPABET phoneme set (39 phonemes + special tokens)"""
     
-    # Core TIMIT phoneme set (39 phones after reduction)
-    PHONEMES = [
+    VOWELS = [
         # Vowels (15)
         'iy', 'ih', 'eh', 'ae', 'ah', 'aw', 'ay', 'ey', 'oy', 
         'ow', 'uh', 'uw', 'er', 'ao', 'aa',
-        
+    ]
+    
+    # Core TIMIT phoneme set (39 phones after reduction)
+    CONSONANTS = [
         # Consonants (24)
         'b', 'd', 'g', 'p', 't', 'k',  # Stops
         'jh', 'ch',  # Affricates
@@ -95,7 +97,7 @@ class PhonemeVocabularyARPABET:
     ]
     
     def __init__(self):
-        self.phonemes = self.SPECIAL_TOKENS + self.PHONEMES
+        self.phonemes = self.SPECIAL_TOKENS + self.VOWELS + self.CONSONANTS
         self.phoneme_to_id = {p: i for i, p in enumerate(self.phonemes)}
         self.id_to_phoneme = {i: p for p, i in self.phoneme_to_id.items()}
         self.vocab_size = len(self.phonemes)
@@ -249,7 +251,7 @@ class HuBERTForPhonemeClassification(nn.Module):
 # 3. DATA PREPROCESSING
 # ============================================================================
 
-class SlidingWindowDataCollator:
+class DataCollater:
     """
     Processes audio into sliding windows and prepares phoneme labels for CTC
     """
@@ -338,10 +340,13 @@ class SlidingWindowDataCollator:
     def _parse_phoneme_sequence(self, feature: Dict) -> List[str]:
         if 'phonetic_detail' in feature and feature['phonetic_detail']:
             phonemes = []
+            prev_phon = ""
             for phone_info in feature['phonetic_detail']:
                 phone = phone_info.get('utterance', '[UNK]')
-                normalized = self.vocab.normalize_timit_phone(phone)  # Use vocab's normalize method
-                phonemes.append(normalized)
+                normalized = self.vocab.normalize_timit_phone(phone)
+                if normalized == 'y' and not (prev_phon in self.vocab.VOWELS and 'y' in prev_phon) :
+                    phonemes.append(normalized)
+                prev_phon = normalized
             return phonemes if phonemes else ['[UNK]']
         return ['[UNK]']
     
@@ -364,7 +369,7 @@ def setup_training(
     model: HuBERTForPhonemeClassification,
     train_dataset,
     eval_dataset,
-    data_collator: SlidingWindowDataCollator,
+    data_collator: DataCollater,
     output_dir: str = "./phon-embedder"
 ):
     """Configure training arguments and trainer"""
@@ -529,7 +534,7 @@ def main():
     print("Duration (seconds):", len(sample["audio"]["array"]) / sample["audio"]["sampling_rate"])
     
     # Initialize data collator
-    data_collator = SlidingWindowDataCollator(
+    data_collator = DataCollater(
         processor=processor,
         vocab=vocab,
         window_size_ms=100,
