@@ -469,27 +469,53 @@ def setup_training(
     # Preprocess logits to extract only what we need for metrics
     def preprocess_logits_for_metrics(logits, labels):
         """
-        Trainer passes the logits from model output dict.
-        We just need to ensure it's in the right format.
+        The logits come as (batch, time, vocab_size) but time dimension varies.
+        We need to pad to max length in the batch for stacking.
         """
-        # logits should already be (batch, time, vocab_size)
+        if isinstance(logits, torch.Tensor):
+            # Already a tensor, return as is
+            return logits.detach().cpu()
+        
+        # If it's already processed, return
         return logits
     
     # Custom compute metrics function
     def compute_metrics_wrapper(eval_pred):
         predictions, labels = eval_pred
         
-        # predictions comes from model output - it's the logits
-        # Shape should be (batch, time, vocab_size)
-        # Convert numpy to torch efficiently
-        if not isinstance(predictions, torch.Tensor):
-            predictions = torch.from_numpy(np.ascontiguousarray(predictions))
+        # Debug: print what we received
+        # print(f"Predictions type: {type(predictions)}")
+        # if isinstance(predictions, np.ndarray):
+        #     print(f"Predictions shape: {predictions.shape}, dtype: {predictions.dtype}")
         
-        # CTC decode predictions (greedy)
-        decoded_preds = ctc_greedy_decode(
-            predictions, 
-            blank_id=vocab.ctc_token_id
-        )
+        decoded_preds = []
+        
+        # The Trainer concatenates predictions across batches into a numpy array
+        # but with variable time dimensions, it creates an object array
+        if isinstance(predictions, np.ndarray):
+            # Check if it's an object array (ragged)
+            if predictions.dtype == object:
+                # Each element is a separate array with potentially different time dim
+                for pred in predictions:
+                    pred_tensor = torch.from_numpy(pred) if isinstance(pred, np.ndarray) else pred
+                    if pred_tensor.dim() == 2:  # (time, vocab)
+                        pred_tensor = pred_tensor.unsqueeze(0)  # (1, time, vocab)
+                    sample_decoded = ctc_greedy_decode(pred_tensor, blank_id=vocab.ctc_token_id)
+                    decoded_preds.extend(sample_decoded)
+            else:
+                # Regular array - can process normally
+                predictions_tensor = torch.from_numpy(predictions)
+                decoded_preds = ctc_greedy_decode(predictions_tensor, blank_id=vocab.ctc_token_id)
+        elif isinstance(predictions, torch.Tensor):
+            decoded_preds = ctc_greedy_decode(predictions, blank_id=vocab.ctc_token_id)
+        else:
+            # Last resort: iterate
+            for pred in predictions:
+                pred_tensor = torch.from_numpy(pred) if isinstance(pred, np.ndarray) else pred
+                if pred_tensor.dim() == 2:
+                    pred_tensor = pred_tensor.unsqueeze(0)
+                sample_decoded = ctc_greedy_decode(pred_tensor, blank_id=vocab.ctc_token_id)
+                decoded_preds.extend(sample_decoded)
         
         # Convert labels to list if needed
         if isinstance(labels, np.ndarray):
