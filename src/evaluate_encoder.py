@@ -1,6 +1,6 @@
 """
 Loading and Evaluating Trained HuBERT Phoneme Classifier
-Includes CER, PER, and other phoneme-level metrics
+Includes CER, PER, and other phoneme-level metrics - FIXED VERSION
 """
 
 import torch, os
@@ -15,7 +15,7 @@ from collections import Counter
 
 
 # ============================================================================
-# 1. LOAD TRAINED MODEL
+# 1. LOAD TRAINED MODEL (unchanged)
 # ============================================================================
 
 def load_trained_model(
@@ -23,23 +23,12 @@ def load_trained_model(
     vocab,
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 ):
-    """
-    Load a trained HuBERTForPhonemeClassification model
+    """Load a trained HuBERTForPhonemeClassification model"""
+    from encoder import HuBERTForPhonemeClassification
     
-    Args:
-        model_path: Path to saved model directory (from trainer.save_model())
-        vocab: PhonemeVocabulary instance
-        device: Device to load model on
-    
-    Returns:
-        Loaded model ready for evaluation
-    """
-    from encoder import HuBERTForPhonemeClassification  # Import your model class
-    
-    # Initialize model architecture
     model = HuBERTForPhonemeClassification(
         vocab_size=vocab.vocab_size,
-        freeze_feature_encoder=False,  # Can keep frozen or not
+        freeze_feature_encoder=False,
         freeze_base_model=False
     )
     
@@ -47,12 +36,10 @@ def load_trained_model(
     pytorch_path = os.path.join(model_path, "pytorch_model.bin")
     
     if os.path.exists(safetensors_path):
-        # Load from safetensors format (newer default)
         from safetensors.torch import load_file
         state_dict = load_file(safetensors_path)
         print(f"Loading from safetensors: {safetensors_path}")
     elif os.path.exists(pytorch_path):
-        # Load from pytorch format (older default)
         state_dict = torch.load(pytorch_path, map_location=device)
         print(f"Loading from pytorch: {pytorch_path}")
     else:
@@ -69,62 +56,30 @@ def load_trained_model(
     return model
 
 
-# Alternative: If you saved with trainer.save_model(), you can also use:
-def load_model_from_checkpoint(
-    checkpoint_path: str,
-    vocab,
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-):
-    """Load from a specific checkpoint"""
-    from encoder import HuBERTForPhonemeClassification
-    
-    model = HuBERTForPhonemeClassification(vocab_size=vocab.vocab_size)
-    
-    # Load checkpoint
-    checkpoint = torch.load(f"{checkpoint_path}/pytorch_model.bin", map_location=device)
-    model.load_state_dict(checkpoint)
-    
-    model = model.to(device)
-    model.eval()
-    
-    return model
-
-
 # ============================================================================
-# 2. CTC DECODING
+# 2. IMPROVED CTC DECODING
 # ============================================================================
 
 def ctc_greedy_decode(logits: torch.Tensor, vocab, blank_id: int) -> List[str]:
     """
-    Greedy CTC decoding: take argmax and collapse repetitions
-    
-    Args:
-        logits: (time, vocab_size) or (batch, time, vocab_size)
-        vocab: PhonemeVocabulary instance
-        blank_id: ID of the CTC blank token
-    
-    Returns:
-        List of decoded phoneme sequences
+    Improved greedy CTC decoding with post-processing
     """
     if len(logits.shape) == 3:
-        # Batch decoding
-        predictions = torch.argmax(logits, dim=-1)  # (batch, time)
+        predictions = torch.argmax(logits, dim=-1)
         decoded = []
         for pred_seq in predictions:
-            decoded.append(_decode_single_sequence(pred_seq, vocab, blank_id))
+            decoded.append(_decode_single_sequence_improved(pred_seq, vocab, blank_id))
         return decoded
     else:
-        # Single sequence
         predictions = torch.argmax(logits, dim=-1)
-        return [_decode_single_sequence(predictions, vocab, blank_id)]
+        return [_decode_single_sequence_improved(predictions, vocab, blank_id)]
 
 
-def _decode_single_sequence(predictions: torch.Tensor, vocab, blank_id: int) -> str:
-    """Decode a single sequence with CTC collapse"""
-    # Convert to list
+def _decode_single_sequence_improved(predictions: torch.Tensor, vocab, blank_id: int) -> str:
+    """Decode with CTC collapse and noise filtering"""
     pred_list = predictions.cpu().tolist()
     
-    # Remove consecutive duplicates and blanks
+    # Step 1: Standard CTC collapse
     collapsed = []
     prev = None
     for pred in pred_list:
@@ -132,31 +87,38 @@ def _decode_single_sequence(predictions: torch.Tensor, vocab, blank_id: int) -> 
             collapsed.append(pred)
         prev = pred
     
-    # Convert to phonemes
-    phonemes = [vocab.decode(pid) for pid in collapsed]
+    if not collapsed:
+        return "[UNK]"
     
-    # Join into string (space-separated for phonemes)
-    return " ".join(phonemes)
-
-
-def ctc_beam_search_decode(
-    logits: torch.Tensor,
-    vocab,
-    blank_id: int,
-    beam_width: int = 10
-) -> List[str]:
-    """
-    Beam search decoding for better accuracy
-    This is a simplified version - for production use a library like ctcdecode
-    """
-    # For simplicity, using greedy decode here
-    # In practice, install and use: pip install ctcdecode
-    # Or use libraries like pyctcdecode
-    return ctc_greedy_decode(logits, vocab, blank_id)
+    # Step 2: Remove excessive repetitions (max 2 in a row)
+    filtered = []
+    count = 1
+    for i, pid in enumerate(collapsed):
+        if i > 0 and pid == collapsed[i-1]:
+            count += 1
+            if count <= 2:
+                filtered.append(pid)
+        else:
+            count = 1
+            filtered.append(pid)
+    
+    # Step 3: Convert to phonemes and clean up 'y' artifacts
+    phonemes = [vocab.decode(pid) for pid in filtered]
+    
+    # Remove 'y' if it appears in alternating pattern (likely spurious)
+    cleaned = []
+    for i, phone in enumerate(phonemes):
+        if phone == 'y' and i > 0 and i < len(phonemes) - 1:
+            # Check if surrounded by same non-y phoneme
+            if phonemes[i-1] == phonemes[i+1] and phonemes[i-1] != 'y':
+                continue  # Skip this spurious 'y'
+        cleaned.append(phone)
+    
+    return " ".join(cleaned) if cleaned else "[UNK]"
 
 
 # ============================================================================
-# 3. EVALUATION METRICS
+# 3. EVALUATION METRICS (unchanged)
 # ============================================================================
 
 class PhonemeEvaluator:
@@ -166,18 +128,13 @@ class PhonemeEvaluator:
         self.vocab = vocab
     
     def compute_per(self, predictions: List[str], references: List[str]) -> float:
-        """
-        Phoneme Error Rate (PER) - similar to WER but for phonemes
-        PER = (Substitutions + Deletions + Insertions) / Total Reference Phonemes
-        """
+        """Phoneme Error Rate"""
         total_errors = 0
         total_phonemes = 0
         
         for pred, ref in zip(predictions, references):
             pred_phones = pred.split()
             ref_phones = ref.split()
-            
-            # Use WER function from jiwer (works for any tokens)
             error_rate = wer(ref, pred)
             total_errors += error_rate * len(ref_phones)
             total_phonemes += len(ref_phones)
@@ -185,14 +142,9 @@ class PhonemeEvaluator:
         return total_errors / total_phonemes if total_phonemes > 0 else 0.0
     
     def compute_cer(self, predictions: List[str], references: List[str]) -> float:
-        """
-        Character Error Rate (CER) - treats each phoneme character as a unit
-        Useful when phonemes are multi-character (like 'tʃ')
-        """
-        # Concatenate all predictions and references
+        """Character Error Rate"""
         all_preds = "".join(predictions)
         all_refs = "".join(references)
-        
         return cer(all_refs, all_preds)
     
     def compute_accuracy(self, predictions: List[str], references: List[str]) -> float:
@@ -203,12 +155,9 @@ class PhonemeEvaluator:
         for pred, ref in zip(predictions, references):
             pred_phones = pred.split()
             ref_phones = ref.split()
-            
-            # Pad to same length for comparison
             max_len = max(len(pred_phones), len(ref_phones))
             pred_phones += ['[PAD]'] * (max_len - len(pred_phones))
             ref_phones += ['[PAD]'] * (max_len - len(ref_phones))
-            
             correct += sum(p == r for p, r in zip(pred_phones, ref_phones))
             total += max_len
         
@@ -219,17 +168,13 @@ class PhonemeEvaluator:
         predictions: List[str],
         references: List[str]
     ) -> Dict[str, Counter]:
-        """
-        Compute phoneme confusion matrix
-        Shows which phonemes are commonly confused
-        """
+        """Compute phoneme confusion matrix"""
         confusion = {}
         
         for pred, ref in zip(predictions, references):
             pred_phones = pred.split()
             ref_phones = ref.split()
             
-            # Align sequences (simple alignment - could use edit distance)
             for p, r in zip(pred_phones, ref_phones):
                 if r not in confusion:
                     confusion[r] = Counter()
@@ -251,7 +196,7 @@ class PhonemeEvaluator:
 
 
 # ============================================================================
-# 4. EVALUATION PIPELINE
+# 4. FIXED EVALUATION PIPELINE
 # ============================================================================
 
 def evaluate_model(
@@ -262,20 +207,7 @@ def evaluate_model(
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
     batch_size: int = 8
 ):
-    """
-    Full evaluation pipeline
-    
-    Args:
-        model: Trained HuBERTForPhonemeClassification
-        processor: Wav2Vec2Processor
-        vocab: PhonemeVocabulary
-        test_dataset: HuggingFace dataset with audio and phoneme labels
-        device: Device to run on
-        batch_size: Batch size for evaluation
-    
-    Returns:
-        Dictionary with all metrics
-    """
+    """Full evaluation pipeline with FIXED reference parsing"""
     model.eval()
     evaluator = PhonemeEvaluator(vocab)
     
@@ -284,13 +216,10 @@ def evaluate_model(
     
     print(f"Evaluating on {len(test_dataset)} samples...")
     
-    # Process in batches
     for i in range(0, len(test_dataset), batch_size):
         batch = test_dataset[i:i + batch_size]
-       
-        #print(batch)
-
-        # Prepare audio inputs
+        
+        # Get audio arrays from batch
         audio_arrays = [sample['array'] for sample in batch['audio']]
         inputs = processor(
             audio_arrays,
@@ -305,43 +234,56 @@ def evaluate_model(
             outputs = model(**inputs)
             logits = outputs['logits']
         
-        # Decode predictions
+        # Decode with improved decoder
         predictions = ctc_greedy_decode(logits, vocab, vocab.ctc_token_id)
         
-        # Get references
+        # FIXED: Get references correctly
         references = []
-        for sample in batch['phonetic_detail']:
-            # Parse reference phonemes from dataset
-            #print(batch, sample, sep="\n")
-            ref_phonemes = parse_reference_phonemes(sample, vocab)
+        for phonetic_detail_list in batch['phonetic_detail']:
+            # phonetic_detail_list is already the list of phone dicts
+            ref_phonemes = parse_reference_phonemes(phonetic_detail_list, vocab)
             references.append(ref_phonemes)
         
         all_predictions.extend(predictions)
         all_references.extend(references)
         
         if (i // batch_size) % 10 == 0:
-            print(f"Processed {i + len(batch)}/{len(test_dataset)} samples")
+            print(f"Processed {i + len(audio_arrays)}/{len(test_dataset)} samples")
+    
+    # Analyze prediction patterns
+    print("\n" + "="*60)
+    print("PREDICTION ANALYSIS")
+    print("="*60)
+    analysis = analyze_predictions(all_predictions, vocab)
+    print(f"Total phonemes predicted: {analysis['total_phonemes']}")
+    print(f"Unique phonemes used: {analysis['vocab_coverage']}")
+    print(f"Average prediction length: {analysis['avg_length']:.1f} phonemes")
+    print(f"Repetition rate: {analysis['repetition_rate']:.2%}")
+    print(f"\nMost common phonemes:")
+    for phone, count in analysis['most_common']:
+        pct = 100 * count / analysis['total_phonemes']
+        print(f"  {phone}: {count} ({pct:.1f}%)")
     
     # Compute metrics
     metrics = evaluator.compute_all_metrics(all_predictions, all_references)
     
     # Print results
-    print("\n" + "="*50)
+    print("\n" + "="*60)
     print("EVALUATION RESULTS")
-    print("="*50)
+    print("="*60)
     print(f"Phoneme Error Rate (PER): {metrics['per']:.4f}")
     print(f"Character Error Rate (CER): {metrics['cer']:.4f}")
     print(f"Accuracy: {metrics['accuracy']:.4f}")
-    print("="*50)
+    print("="*60)
     
-    # Show some examples
+    # Show examples
     print("\nExample predictions (first 5):")
     for i in range(min(5, len(all_predictions))):
         print(f"\nSample {i}:")
         print(f"Reference:  {all_references[i]}")
         print(f"Prediction: {all_predictions[i]}")
     
-    # Compute confusion matrix
+    # Confusion matrix
     confusion = evaluator.compute_confusion_matrix(all_predictions, all_references)
     print("\nMost confused phonemes:")
     for phoneme, confusions in list(confusion.items())[:10]:
@@ -353,28 +295,60 @@ def evaluate_model(
         'metrics': metrics,
         'predictions': all_predictions,
         'references': all_references,
-        'confusion_matrix': confusion
+        'confusion_matrix': confusion,
+        'analysis': analysis
     }
 
 
-def parse_reference_phonemes(sample: Dict, vocab) -> str:
+def parse_reference_phonemes(phonetic_detail_list, vocab) -> str:
     """
-    Parse reference phonemes from TIMIT dataset sample
-    Adapt this to your actual dataset structure
+    FIXED: Parse reference phonemes from TIMIT phonetic_detail
+    
+    Args:
+        phonetic_detail_list: List of dicts like [{'start': X, 'stop': Y, 'utterance': 'ph'}, ...]
+        vocab: PhonemeVocabularyARPABET with normalize_timit_phone method
     """
-    if 'phonetic_detail' in sample:
+    if isinstance(phonetic_detail_list, list) and len(phonetic_detail_list) > 0:
         phonemes = []
-        print(sample)
-        for phone_info in sample:
-            phone = phone_info.get('utterance', '[UNK]')
-            # Map to IPA if needed
-            phonemes.append(phone)
-        return " ".join(phonemes)
-    elif 'text' in sample:
-        # If phonemes are in text field
-        return sample['text']
-    else:
-        return "[UNK]"
+        for phone_info in phonetic_detail_list:
+            if isinstance(phone_info, dict) and 'utterance' in phone_info:
+                phone = phone_info['utterance']
+                normalized = vocab.normalize_timit_phone(phone)
+                phonemes.append(normalized)
+        return " ".join(phonemes) if phonemes else "[UNK]"
+    return "[UNK]"
+
+
+def analyze_predictions(predictions: List[str], vocab) -> dict:
+    """Analyze prediction patterns"""
+    all_phonemes = []
+    phoneme_counts = Counter()
+    
+    for pred in predictions:
+        phones = pred.split()
+        all_phonemes.extend(phones)
+        phoneme_counts.update(phones)
+    
+    total_phonemes = len(all_phonemes)
+    unique_phonemes = len(set(all_phonemes))
+    
+    most_common = phoneme_counts.most_common(10)
+    
+    repetition_count = 0
+    for pred in predictions:
+        phones = pred.split()
+        for i in range(len(phones)-1):
+            if phones[i] == phones[i+1]:
+                repetition_count += 1
+    
+    return {
+        'total_phonemes': total_phonemes,
+        'unique_phonemes': unique_phonemes,
+        'vocab_coverage': f"{unique_phonemes}/{vocab.vocab_size}",
+        'most_common': most_common,
+        'repetition_rate': repetition_count / max(1, total_phonemes - len(predictions)),
+        'avg_length': total_phonemes / len(predictions)
+    }
 
 
 # ============================================================================
@@ -384,25 +358,26 @@ def parse_reference_phonemes(sample: Dict, vocab) -> str:
 def main():
     """Complete example of loading and evaluating"""
     
-    # 1. Setup vocabulary (same as training)
+    # Use ARPABET vocab (matching training)
     from encoder import PhonemeVocabularyARPABET
     vocab = PhonemeVocabularyARPABET()
+    print(f"Vocabulary size: {vocab.vocab_size}")
     
-    # 2. Load processor
+    # Load processor
     processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
     
-    # 3. Load trained model
-    model_path = "./final_model"  # or "./phon-embedder/checkpoint-XXXX"
+    # Load trained model
+    model_path = "./final_model"
     model = load_trained_model(model_path, vocab)
     
-    # 4. Load test dataset
+    # Load test dataset
     print("Loading test dataset...")
     dataset = load_dataset("kylelovesllms/timit_asr_ipa")
     dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
     test_dataset = dataset['test']
     
+    # Quick diagnostic
     test_audio = dataset['test'][0]['audio']['array']
-    print(test_audio)
     inputs = processor(test_audio, sampling_rate=16000, return_tensors="pt").to("cuda")
     
     with torch.no_grad():
@@ -410,19 +385,17 @@ def main():
         logits = outputs['logits']
         probs = torch.softmax(logits, dim=-1)
     
-    # Check entropy - low entropy means it's overconfident
     entropy = -(probs * torch.log(probs + 1e-10)).sum(dim=-1).mean()
     print(f"Average entropy: {entropy:.3f}")
     print(f"Max entropy possible: {torch.log(torch.tensor(vocab.vocab_size)):.3f}")
-
-    # Check which phonemes it ever predicts
+    
     predictions = torch.argmax(logits, dim=-1).flatten()
     unique_preds = torch.unique(predictions)
     print(f"Unique phonemes predicted: {len(unique_preds)} out of {vocab.vocab_size}")
     for pred_id in unique_preds[:10]:
         print(f"  - {vocab.decode(pred_id.item())}")
-
-    # 5. Evaluate
+    
+    # Evaluate
     results = evaluate_model(
         model=model,
         processor=processor,
@@ -431,12 +404,13 @@ def main():
         batch_size=8
     )
     
-    # 6. Save results
+    # Save results
     import json
     with open('evaluation_results.json', 'w') as f:
         json.dump({
             'metrics': results['metrics'],
-            'num_samples': len(results['predictions'])
+            'num_samples': len(results['predictions']),
+            'analysis': {k: str(v) for k, v in results['analysis'].items()}
         }, f, indent=2)
     
     print("\nResults saved to evaluation_results.json")
