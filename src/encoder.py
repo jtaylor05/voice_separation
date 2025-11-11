@@ -522,7 +522,7 @@ def setup_training(
             labels = labels.tolist()
         
         # Compute metrics
-        metrics = compute_metrics(decoded_preds, labels, vocab)
+        metrics = compute_metrics(decoded_preds, labels, vocab, blank_id=vocab.ctc_token_id)
         return metrics
     
     trainer = Trainer(
