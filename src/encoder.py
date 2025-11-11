@@ -466,20 +466,37 @@ def setup_training(
         greater_is_better=False,
     )
     
+    # Preprocess logits to extract only what we need for metrics
+    def preprocess_logits_for_metrics(logits, labels):
+        """
+        Trainer passes the logits from model output dict.
+        We just need to ensure it's in the right format.
+        """
+        # logits should already be (batch, time, vocab_size)
+        return logits
+    
     # Custom compute metrics function
     def compute_metrics_wrapper(eval_pred):
-        logits, labels = eval_pred
+        predictions, labels = eval_pred
         
-        # CTC decode predictions
-        predictions = ctc_greedy_decode(
-            torch.tensor(logits), 
+        # predictions comes from model output - it's the logits
+        # Shape should be (batch, time, vocab_size)
+        # Convert numpy to torch efficiently
+        if not isinstance(predictions, torch.Tensor):
+            predictions = torch.from_numpy(np.ascontiguousarray(predictions))
+        
+        # CTC decode predictions (greedy)
+        decoded_preds = ctc_greedy_decode(
+            predictions, 
             blank_id=vocab.ctc_token_id
         )
         
-        # Convert labels to list of lists
-        label_lists = labels.tolist()
+        # Convert labels to list if needed
+        if isinstance(labels, np.ndarray):
+            labels = labels.tolist()
         
-        metrics = compute_metrics(predictions, label_lists, vocab, vocab.ctc_token_id)
+        # Compute metrics
+        metrics = compute_metrics(decoded_preds, labels, vocab)
         return metrics
     
     trainer = Trainer(
@@ -489,7 +506,8 @@ def setup_training(
         eval_dataset=eval_dataset,
         data_collator=data_collator,
         compute_metrics=compute_metrics_wrapper,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
     )
     
     return trainer
