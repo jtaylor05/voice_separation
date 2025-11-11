@@ -256,6 +256,8 @@ class DataCollater:
     Processes audio into sliding windows and prepares phoneme labels for CTC
     """
     
+    y_ignored = 0
+    
     def __init__(
         self,
         processor: Wav2Vec2Processor,
@@ -346,6 +348,7 @@ class DataCollater:
                 normalized = self.vocab.normalize_timit_phone(phone)
                 if normalized == 'y' and not (prev_phon in self.vocab.VOWELS and 'y' in prev_phon) :
                     phonemes.append(normalized)
+                else: self.y_ignored += 1
                 prev_phon = normalized
             return phonemes if phonemes else ['[UNK]']
         return ['[UNK]']
@@ -557,16 +560,10 @@ def main():
     trainer.save_model("./final_model")
     
     # Real-time inference example
-    print("\nTesting real-time inference...")
-    classifier = RealtimePhonemeClassifier(model, processor, vocab)
+    # print("\nTesting real-time inference...")
+    # classifier = RealtimePhonemeClassifier(model, processor, vocab)
     
-    # Get a test sample
-    test_audio = dataset['test'][0]['audio']['array']
-    results = classifier.process_stream(test_audio[:16000])  # 1 second
-    
-    for i, result in enumerate(results):
-        print(f"Window {i}: {result['predicted_phoneme']} "
-              f"(confidence: {result['top_predictions'][0][1]:.3f})")
+    print(f"\nNumber of y phonemes deleted: {data_collator.y_ignored}")
 
 
 if __name__ == "__main__":
