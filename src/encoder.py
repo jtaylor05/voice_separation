@@ -17,6 +17,7 @@ from datasets import load_dataset, Audio
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 import numpy as np
+from collections import Counter
 
 # ============================================================================
 # 1. PHONEME VOCABULARY SETUP
@@ -97,7 +98,7 @@ class PhonemeVocabularyARPABET:
     ]
     
     def __init__(self):
-        self.phonemes = self.SPECIAL_TOKENS + self.VOWELS + self.CONSONANTS
+        self.phonemes = self.VOWELS + self.CONSONANTS + self.SPECIAL_TOKENS
         self.phoneme_to_id = {p: i for i, p in enumerate(self.phonemes)}
         self.id_to_phoneme = {i: p for p, i in self.phoneme_to_id.items()}
         self.vocab_size = len(self.phonemes)
@@ -176,6 +177,7 @@ class HuBERTForPhonemeClassification(nn.Module):
         
         # CTC Classification head
         self.dropout = nn.Dropout(drop_out)
+        self.layer_norm = nn.LayerNorm(self.hubert.config.hidden_size)
         self.classifier = nn.Linear(self.hubert.config.hidden_size, vocab_size)
         
         # CTC Loss
@@ -204,6 +206,7 @@ class HuBERTForPhonemeClassification(nn.Module):
         )
         
         hidden_states = outputs.last_hidden_state  # (batch, time, hidden_size)
+        hidden_states = self.layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
         
         # Phoneme logits
@@ -214,6 +217,7 @@ class HuBERTForPhonemeClassification(nn.Module):
             # Calculate sequence lengths for CTC
             if attention_mask is not None:
                 input_lengths = attention_mask.sum(-1)
+                input_lengths = input_lengths // 320
             else:
                 input_lengths = torch.full(
                     (logits.size(0),), 
@@ -262,19 +266,16 @@ class DataCollater:
         self,
         processor: Wav2Vec2Processor,
         vocab: PhonemeVocabularyARPABET,
-        window_size_ms: int = 100,
-        overlap_frames: int = 100,
         sampling_rate: int = 16000,
         padding: Union[bool, str] = True,
         max_length: Optional[int] = None
     ):
         self.processor = processor
         self.vocab = vocab
-        self.window_size = int(window_size_ms * sampling_rate / 1000)  # samples
-        self.overlap_frames = overlap_frames
         self.sampling_rate = sampling_rate
         self.padding = padding
         self.max_length = max_length
+        self.phoneme_stats = Counter()
     
     def __call__(self, features: List[Dict]) -> Dict[str, torch.Tensor]:
         """
@@ -288,21 +289,14 @@ class DataCollater:
         
         for feature in features:
             audio = feature['audio']['array']
-            #print(audio)
-            
-            if len(audio) < self.window_size:
-                audio = np.pad(audio, (0, self.window_size - len(audio)))
-
-            # Apply sliding windows if audio is longer than window_size
-            #if len(audio) > self.window_size:
-                #windows = self._create_windows(audio)
-                # For now, use first window (can be extended for full processing)
-                #audio = windows[0]
             
             input_features.append(audio)
             
             # Process phoneme labels
             phonemes = self._parse_phoneme_sequence(feature)
+            
+            self.phoneme_stats.update(phonemes)
+            
             label_ids = [self.vocab.encode(p) for p in phonemes]
             label_features.append(label_ids)
             label_lengths.append(len(label_ids))
@@ -328,76 +322,165 @@ class DataCollater:
         
         return batch
     
-    def _create_windows(self, audio: np.ndarray) -> List[np.ndarray]:
-        """Create overlapping sliding windows"""
-        windows = []
-        stride = self.window_size - self.overlap_frames
-        
-        for start in range(0, len(audio) - self.window_size + 1, stride):
-            window = audio[start:start + self.window_size]
-            windows.append(window)
-        
-        return windows
-    
     def _parse_phoneme_sequence(self, feature: Dict) -> List[str]:
-        if 'phonetic_detail' in feature and feature['phonetic_detail']:
-            phonemes = []
-            prev_phon = ""
-            for phone_info in feature['phonetic_detail']:
-                phone = phone_info.get('utterance', '[UNK]')
-                normalized = self.vocab.normalize_timit_phone(phone)
-                if not (normalized == 'y' and prev_phon in self.vocab.VOWELS and 'y' in prev_phon) :
-                    phonemes.append(normalized)
-                else: self.y_ignored += 1
-                prev_phon = normalized
-            return phonemes if phonemes else ['[UNK]']
-        return ['[UNK]']
+        if 'phonetic_detail' not in feature or not feature['phonetic_detail']:
+            return ['[UNK]']
+        
+        phonemes = []
+        prev_phone = None
+        
+        for phone_info in feature['phonetic_detail']:
+            phone = phone_info.get('utterance', '[UNK]')
+            normalized = self.vocab.normalize_timit_phone(phone)
+            
+            # Remove consecutive duplicates (common in TIMIT)
+            if normalized != prev_phone:
+                phonemes.append(normalized)
+                prev_phone = normalized
+        
+        return phonemes if phonemes else ['[UNK]']
     
-    def _map_timit_to_ipa(self, timit_phone: str) -> str:
-        """Map TIMIT phoneme notation to IPA (customize as needed)"""
-        # Basic mapping - expand based on TIMIT phoneme set
-        mapping = {
-            'sil': '[SIL]',
-            'spn': '[SPN]',
-            # Add more mappings as needed
-        }
-        return mapping.get(timit_phone.lower(), timit_phone)
+    def print_statistics(self):
+        """Print phoneme distribution"""
+        print("\n" + "="*60)
+        print("PHONEME STATISTICS")
+        print("="*60)
+        total = sum(self.phoneme_stats.values())
+        print(f"Total phonemes: {total}")
+        print(f"Unique phonemes: {len(self.phoneme_stats)}")
+        print("\nTop 20 most common:")
+        for phone, count in self.phoneme_stats.most_common(20):
+            print(f"  {phone:6s}: {count:6d} ({100*count/total:5.2f}%)")
 
 
 # ============================================================================
 # 4. TRAINING SETUP
 # ============================================================================
 
+def ctc_greedy_decode(logits: torch.Tensor, blank_id: int) -> List[List[int]]:
+    """
+    Greedy CTC decoding: collapse repeated tokens and remove blanks
+    
+    Args:
+        logits: (batch, time, vocab_size)
+        blank_id: ID of the CTC blank token
+    
+    Returns:
+        List of decoded sequences (list of token IDs)
+    """
+    # Get predictions
+    predictions = torch.argmax(logits, dim=-1)  # (batch, time)
+    
+    decoded_sequences = []
+    for pred_seq in predictions:
+        decoded = []
+        prev_token = None
+        
+        for token in pred_seq.cpu().numpy():
+            # Skip blanks
+            if token == blank_id:
+                prev_token = None
+                continue
+            
+            # Skip repeated tokens (CTC collapse)
+            if token != prev_token:
+                decoded.append(int(token))
+                prev_token = token
+        
+        decoded_sequences.append(decoded)
+    
+    return decoded_sequences
+
+def compute_metrics(pred_ids: List[List[int]], 
+                    label_ids: List[List[int]], 
+                    vocab: PhonemeVocabularyARPABET,
+                    blank_id: int) -> Dict:
+    """
+    Compute PER (Phoneme Error Rate) using edit distance
+    """
+    from Levenshtein import distance as levenshtein_distance
+    
+    total_distance = 0
+    total_length = 0
+    exact_matches = 0
+    
+    for pred, label in zip(pred_ids, label_ids):
+        # Remove padding from labels
+        label_clean = [l for l in label if l != vocab.pad_token_id]
+        
+        # Decode predictions (already CTC-decoded)
+        pred_phones = vocab.batch_decode(pred)
+        label_phones = vocab.batch_decode(label_clean)
+        
+        # Convert to strings for edit distance
+        pred_str = ' '.join(pred_phones)
+        label_str = ' '.join(label_phones)
+        
+        dist = levenshtein_distance(pred_str, label_str)
+        total_distance += dist
+        total_length += len(label_str)
+        
+        if pred_str == label_str:
+            exact_matches += 1
+    
+    per = total_distance / max(total_length, 1)
+    accuracy = exact_matches / len(pred_ids)
+    
+    return {
+        'phoneme_error_rate': per,
+        'accuracy': accuracy,
+        'total_samples': len(pred_ids)
+    }
+
 def setup_training(
     model: HuBERTForPhonemeClassification,
     train_dataset,
     eval_dataset,
     data_collator: DataCollater,
+    vocab : PhonemeVocabularyARPABET,
     output_dir: str = "./phon-embedder"
 ):
     """Configure training arguments and trainer"""
     
     training_args = TrainingArguments(
         output_dir=output_dir,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=8,
+        per_device_train_batch_size=8,  # Increased from 4
+        per_device_eval_batch_size=16,
         gradient_accumulation_steps=2,
         eval_strategy="steps",
         eval_steps=500,
         save_steps=1000,
-        logging_steps=100,
-        learning_rate=1e-4,
-        warmup_steps=500,
-        max_steps=10000,
-        fp16=True,  # For faster training
+        logging_steps=50,
+        learning_rate=5e-5,  # Reduced from 1e-4
+        warmup_steps=1000,
+        max_steps=15000,
+        fp16=True,
         optim="adamw_torch",
+        weight_decay=0.01,
         push_to_hub=False,
         report_to=["tensorboard"],
         remove_unused_columns=False,
         dataloader_num_workers=4,
         load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
+        metric_for_best_model="phoneme_error_rate",
+        greater_is_better=False,
     )
+    
+    # Custom compute metrics function
+    def compute_metrics_wrapper(eval_pred):
+        logits, labels = eval_pred
+        
+        # CTC decode predictions
+        predictions = ctc_greedy_decode(
+            torch.tensor(logits), 
+            blank_id=vocab.ctc_token_id
+        )
+        
+        # Convert labels to list of lists
+        label_lists = labels.tolist()
+        
+        metrics = compute_metrics(predictions, label_lists, vocab, vocab.ctc_token_id)
+        return metrics
     
     trainer = Trainer(
         model=model,
@@ -405,7 +488,8 @@ def setup_training(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        callbacks=[EarlyStoppingCallback(3)],
+        compute_metrics=compute_metrics_wrapper,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
     )
     
     return trainer
@@ -539,9 +623,7 @@ def main():
     # Initialize data collator
     data_collator = DataCollater(
         processor=processor,
-        vocab=vocab,
-        window_size_ms=100,
-        overlap_frames=100
+        vocab=vocab
     )
     
     # Setup training
@@ -549,6 +631,7 @@ def main():
         model=model,
         train_dataset=dataset['train'],
         eval_dataset=dataset['test'],
+        vocab=vocab,
         data_collator=data_collator
     )
     
@@ -559,11 +642,7 @@ def main():
     # Save model
     trainer.save_model("./final_model")
     
-    # Real-time inference example
-    # print("\nTesting real-time inference...")
-    # classifier = RealtimePhonemeClassifier(model, processor, vocab)
-    
-    print(f"\nNumber of y phonemes deleted: {data_collator.y_ignored}")
+    data_collator.print_statistics()
 
 
 if __name__ == "__main__":
