@@ -344,7 +344,7 @@ class DataCollater:
             for phone_info in feature['phonetic_detail']:
                 phone = phone_info.get('utterance', '[UNK]')
                 normalized = self.vocab.normalize_timit_phone(phone)
-                if normalized == 'y' and not (prev_phon in self.vocab.VOWELS and 'y' in prev_phon) :
+                if not (normalized == 'y' and prev_phon in self.vocab.VOWELS and 'y' in prev_phon) :
                     phonemes.append(normalized)
                 prev_phon = normalized
             return phonemes if phonemes else ['[UNK]']
