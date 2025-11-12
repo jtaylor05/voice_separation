@@ -736,7 +736,8 @@ def setup_flowavse_training(
     phoneme_encoder = HuBERTForPhonemeClassification(
         vocab_size=vocab.vocab_size
     )
-    phoneme_encoder.load_state_dict(torch.load(f"{phoneme_encoder_path}/pytorch_model.bin"))
+    from safetensors.torch import load_file
+    phoneme_encoder.load_state_dict(load_file(f"{phoneme_encoder_path}/model.safetensors"))
     
     # Create phoneme adapter
     phoneme_adapter = PhonemeConditioningAdapter(
