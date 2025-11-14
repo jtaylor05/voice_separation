@@ -731,7 +731,7 @@ def setup_flowavse_training(
     # Load vocabulary and processor
     vocab = PhonemeVocabularyARPABET()
     processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
-    
+    /
     # Load pre-trained phoneme encoder
     phoneme_encoder = HuBERTForPhonemeClassification(
         vocab_size=vocab.vocab_size
@@ -834,6 +834,9 @@ class RealtimeFlowAVSE:
         self.window_size = int(window_size_ms * 16000 / 1000)
         self.overlap = overlap
         self.device = device
+        if phoneme_encoder is not None:
+            self.phoneme_encoder = phoneme_encoder.cpu()
+            self.phoneme_encoder.eval()
     
     @torch.no_grad()
     def denoise(self, noisy_audio: np.ndarray) -> np.ndarray:
