@@ -568,23 +568,17 @@ class FlowAVSEPhonemeConditioned(nn.Module):
         # Add time embedding (broadcast across time dimension)
         audio_features = waveform_features + t_emb.unsqueeze(1)  # (batch, time, d_model)
         
-        # Downsample phoneme condition to match waveform temporal resolution
-        # Phoneme embeddings are typically ~50 fps, waveform is 16000 fps
-        # Need to upsample phoneme_condition or downsample audio_features
-        
-        # Option A: Interpolate phoneme condition to match waveform length
-        if phoneme_condition.shape[1] != audio_features.shape[1]:
-            # phoneme_condition: (batch, time_cond, d_model)
-            # Need to interpolate to (batch, time_waveform, d_model)
-            phoneme_condition = phoneme_condition.transpose(1, 2)  # (batch, d_model, time_cond)
-            phoneme_condition = F.interpolate(
-                phoneme_condition,
-                size=audio_features.shape[1],
-                mode='linear',
-                align_corners=False
+        downsample_factor = audio_features.shape[1] // phoneme_condition.shape[1]
+
+        if downsample_factor > 1:
+            # Use adaptive average pooling to downsample audio features
+            audio_features_transposed = audio_features.transpose(1, 2)  # (batch, d_model, time)
+            audio_features_pooled = F.adaptive_avg_pool1d(
+                audio_features_transposed,
+                output_size=phoneme_condition.shape[1]
             )
-            phoneme_condition = phoneme_condition.transpose(1, 2)  # (batch, time_waveform, d_model)
-        
+            audio_features = audio_features_pooled.transpose(1, 2)  # (batch, time_phoneme, d_model)
+
         # Apply cross-attention layers between waveform and phoneme features
         for layer in self.cross_attention_layers:
             audio_features = layer(audio_features, phoneme_condition)
@@ -595,9 +589,12 @@ class FlowAVSEPhonemeConditioned(nn.Module):
         
         # Use a final 1x1 conv to map d_model -> 1 channel
         velocity = velocity.transpose(1, 2)  # (batch, d_model, time)
-        
-        # Add a final projection layer (define in __init__):
-        # self.velocity_output = nn.Conv1d(d_model, 1, kernel_size=1)
+        velocity = F.interpolate(
+            velocity,
+            size=xt.shape[2],  # Original waveform length
+            mode='linear',
+            align_corners=False
+        )
         velocity = self.velocity_output(velocity)  # (batch, 1, time)
         
         return velocity
