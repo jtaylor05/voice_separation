@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from dataclasses import dataclass
 import torchaudio
-import math
+import math, json, os
 
 # Import the phoneme encoder from previous pipeline
 from encoder import (
@@ -1211,53 +1211,177 @@ def main_inference():
     print("\nInference complete!")
 
 
+
 def main_evaluation():
-    """Evaluate model on test set"""
+    """Evaluate model on VoiceBank-DEMAND test set"""
     
     print("="*70)
-    print("FlowAVSE Evaluation")
+    print("FlowAVSE Evaluation on VoiceBank-DEMAND")
     print("="*70)
     
     # Load test dataset
-    dataset = load_dataset("kylelovesllms/timit_asr_ipa", split="test")
-    dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+    print("\nLoading VoiceBank-DEMAND test dataset...")
+    dataset = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k", split="test")
     
-    # Initialize model (same as inference)
-    # ... (load model code here)
+    # Initialize vocabulary and processor
+    print("Loading model components...")
+    vocab = PhonemeVocabularyARPABET()
+    processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
     
-    # Evaluate
+    # Load phoneme encoder
+    PHONEME_ENCODER_PATH = "./final_model"
+    from safetensors.torch import load_file
+    phoneme_encoder = HuBERTForPhonemeClassification(vocab_size=vocab.vocab_size)
+    phoneme_encoder.load_state_dict(load_file(f"{PHONEME_ENCODER_PATH}/model.safetensors"))
+    
+    # Load FlowAVSE model
+    FLOWAVSE_MODEL_PATH = "./flowavse_phoneme_output/final_model"
+    phoneme_adapter = PhonemeConditioningAdapter()
+    model = FlowAVSEPhonemeConditioned(
+        phoneme_encoder=phoneme_encoder,
+        phoneme_adapter=phoneme_adapter,
+        freeze_phoneme_encoder=True
+    )
+    
+    # Try loading model weights
+    try:
+        model.load_state_dict(load_file(f"{FLOWAVSE_MODEL_PATH}/model.safetensors"))
+        print(f"Loaded model from {FLOWAVSE_MODEL_PATH}/model.safetensors")
+    except:
+        model.load_state_dict(torch.load(f"{FLOWAVSE_MODEL_PATH}/pytorch_model.bin", weights_only=True))
+        print(f"Loaded model from {FLOWAVSE_MODEL_PATH}/pytorch_model.bin")
+    
+    # Create inference pipeline
+    inference_pipeline = RealtimeFlowAVSE(
+        model=model,
+        processor=processor,
+        window_size_ms=1000,
+        overlap=0.2
+    )
+    
+    # Initialize metrics
     metrics = SpeechEnhancementMetrics()
     all_results = []
     
-    print("\nEvaluating on test set...")
+    print(f"\nEvaluating on {len(dataset)} test samples...")
+    print("="*70)
+    
+    # Evaluate each sample
     for i, example in enumerate(dataset):
-        if i >= 10:  # Evaluate on subset
-            break
+        # Get clean and noisy audio from the dataset
+        clean_audio = example['clean']['array']
+        noisy_audio = example['noisy']['array']
         
-        clean_audio = example['audio']['array']
+        # Ensure same length (sometimes there are minor mismatches)
+        min_len = min(len(clean_audio), len(noisy_audio))
+        clean_audio = clean_audio[:min_len]
+        noisy_audio = noisy_audio[:min_len]
         
-        # Add noise
-        noise_aug = NoiseAugmentation()
-        noisy_audio = noise_aug.add_noise(clean_audio)
+        # Compute input metrics (before denoising)
+        input_snr = metrics.snr(clean_audio, noisy_audio)
         
-        # Denoise
-        # denoised_audio = inference_pipeline.denoise(noisy_audio)
+        print(f"\nSample {i+1}/{len(dataset)}:")
+        print(f"  Duration: {len(clean_audio)/16000:.2f}s")
+        print(f"  Input SNR: {input_snr:.2f} dB")
         
-        # Compute metrics
-        # results = metrics.compute_all_metrics(clean_audio, denoised_audio)
-        # all_results.append(results)
+        try:
+            # Denoise audio
+            denoised_audio = inference_pipeline.denoise(noisy_audio)
+            
+            # Ensure same length for metric computation
+            min_len = min(len(clean_audio), len(denoised_audio))
+            clean_audio_eval = clean_audio[:min_len]
+            denoised_audio_eval = denoised_audio[:min_len]
+            
+            # Compute all metrics
+            results = metrics.compute_all_metrics(clean_audio_eval, denoised_audio_eval)
+            results['input_snr'] = input_snr
+            
+            # Compute improvement
+            output_snr = results['snr']
+            results['snr_improvement'] = output_snr - input_snr
+            
+            all_results.append(results)
+            
+            # Print results for this sample
+            print(f"  Output SNR: {output_snr:.2f} dB (improvement: {results['snr_improvement']:.2f} dB)")
+            print(f"  PESQ: {results['pesq']:.3f}")
+            print(f"  STOI: {results['stoi']:.3f}")
+            print(f"  SI-SDR: {results['si_sdr']:.2f} dB")
+            
+        except Exception as e:
+            print(f"  Error processing sample {i+1}: {e}")
+            continue
         
-        # print(f"Sample {i+1}: PESQ={results['pesq']:.3f}, STOI={results['stoi']:.3f}")
+        # Optional: Save a few sample outputs for listening
+        if i < 5:
+            try:
+                output_dir = "./evaluation_samples"
+                os.makedirs(output_dir, exist_ok=True)
+                
+                # Save clean, noisy, and denoised
+                torchaudio.save(
+                    f"{output_dir}/sample_{i+1}_clean.wav",
+                    torch.tensor(clean_audio_eval).unsqueeze(0),
+                    16000
+                )
+                torchaudio.save(
+                    f"{output_dir}/sample_{i+1}_noisy.wav",
+                    torch.tensor(noisy_audio[:min_len]).unsqueeze(0),
+                    16000
+                )
+                torchaudio.save(
+                    f"{output_dir}/sample_{i+1}_denoised.wav",
+                    torch.tensor(denoised_audio_eval).unsqueeze(0),
+                    16000
+                )
+                print(f"  Saved audio samples to {output_dir}/")
+            except:
+                pass
     
-    # Average results
-    # avg_metrics = {
-    #     key: np.mean([r[key] for r in all_results])
-    #     for key in all_results[0].keys()
-    # }
+    # Calculate and display average metrics
+    print("\n" + "="*70)
+    print("OVERALL RESULTS")
+    print("="*70)
     
-    # print("\nAverage Metrics:")
-    # for key, value in avg_metrics.items():
-    #     print(f"  {key.upper()}: {value:.3f}")
+    if len(all_results) == 0:
+        print("No successful evaluations!")
+        return
+    
+    avg_metrics = {
+        key: np.mean([r[key] for r in all_results])
+        for key in all_results[0].keys()
+    }
+    
+    std_metrics = {
+        key: np.std([r[key] for r in all_results])
+        for key in all_results[0].keys()
+    }
+    
+    print(f"\nEvaluated {len(all_results)} samples:")
+    print(f"\n{'Metric':<20} {'Mean':<12} {'Std':<12}")
+    print("-"*44)
+    print(f"{'Input SNR (dB)':<20} {avg_metrics['input_snr']:>8.2f}    {std_metrics['input_snr']:>8.2f}")
+    print(f"{'Output SNR (dB)':<20} {avg_metrics['snr']:>8.2f}    {std_metrics['snr']:>8.2f}")
+    print(f"{'SNR Improvement':<20} {avg_metrics['snr_improvement']:>8.2f}    {std_metrics['snr_improvement']:>8.2f}")
+    print(f"{'PESQ':<20} {avg_metrics['pesq']:>8.3f}    {std_metrics['pesq']:>8.3f}")
+    print(f"{'STOI':<20} {avg_metrics['stoi']:>8.3f}    {std_metrics['stoi']:>8.3f}")
+    print(f"{'SI-SDR (dB)':<20} {avg_metrics['si_sdr']:>8.2f}    {std_metrics['si_sdr']:>8.2f}")
+    
+    # Save results to file
+    results_file = "./evaluation_results.json"
+    with open(results_file, 'w') as f:
+        json.dump({
+            'average_metrics': avg_metrics,
+            'std_metrics': std_metrics,
+            'num_samples': len(all_results),
+            'individual_results': all_results
+        }, f, indent=2)
+    print(f"\nDetailed results saved to {results_file}")
+    
+    print("\n" + "="*70)
+    print("Evaluation complete!")
+    print("="*70)
 
 
 # ============================================================================
