@@ -112,15 +112,41 @@ class ConditionalFlowMatching(nn.Module):
     Uses Optimal Transport path for training
     """
     
-    def __init__(self, sigma_min: float = 1e-4):
+    def __init__(self, sigma_max : float = 0.5, sigma_min: float = 1e-4, epsilon : float = 1e-5):
         super().__init__()
         self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.epsilon = epsilon
     
     def sample_time(self, batch_size: int, device: torch.device) -> torch.Tensor:
         """Sample random timesteps uniformly"""
         return torch.rand(batch_size, device=device)
     
+    def compute_sigma_t(self, t: torch.Tensor) -> torch.Tensor:
+        """Variance-preserving schedule: σ_t = sqrt(t * (1-t)) * σ_max"""
+        return torch.sqrt(t * (1 - t) + self.epsilon) * self.sigma_max
+    
     def compute_conditional_flow(
+        self,
+        x0: torch.Tensor,  # Clean
+        x1: torch.Tensor,  # Noisy
+        t: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        t_shape = t.view(-1, 1, 1)
+        
+        # OT path with variance preservation
+        mu_t = t_shape * x0 + (1 - t_shape) * x1
+        sigma_t = self.compute_sigma_t(t).view(-1, 1, 1)
+        noise = torch.randn_like(x0)
+        xt = mu_t + sigma_t * noise
+        
+        # Velocity with noise correction
+        noise_correction = (1 - 2 * t_shape) * (self.sigma_max ** 2) * noise / (2 * sigma_t + self.epsilon)
+        ut = (x0 - x1) + noise_correction
+        
+        return xt, ut
+    
+    def _compute_conditional_flow(
         self,
         x0: torch.Tensor,  # Clean speech
         x1: torch.Tensor,  # Noisy speech
@@ -672,7 +698,7 @@ class FlowAVSEDataCollator:
                 # Get phoneme embeddings (cached or computed)
                 if self.use_cached_embeddings:
                     # In practice, you'd compute and cache these during preprocessing
-                    embedding = self._compute_phoneme_embedding(window)
+                    embedding = self._compute_phoneme_embedding(noisy_window)
                 else:
                     embedding = None  # Will be computed on-the-fly
                 
