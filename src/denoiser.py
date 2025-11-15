@@ -7,7 +7,7 @@ Based on: https://github.com/kaistmm/FlowAVSE
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import Wav2Vec2Processor, Trainer, TrainingArguments
+from transformers import Wav2Vec2Processor, Trainer, TrainingArguments, EarlyStoppingCallback
 from datasets import load_dataset, Audio, concatenate_datasets
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -638,6 +638,12 @@ class FlowAVSEDataCollator:
         
         # Cache for phoneme embeddings
         self.embedding_cache = {}
+        
+        if phoneme_encoder is not None:
+            self.phoneme_encoder = phoneme_encoder.cpu()
+            self.phoneme_encoder.eval()
+        else:
+            self.phoneme_encoder = None
     
     def __call__(self, features: List[Dict]) -> Dict[str, torch.Tensor]:
         """
@@ -784,6 +790,9 @@ def setup_flowavse_training(
         fp16=True,
         dataloader_num_workers=4,
         remove_unused_columns=False,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
     )
     
     # Custom trainer for FlowAVSE
@@ -793,6 +802,7 @@ def setup_flowavse_training(
         train_dataset=dataset['train'],
         eval_dataset=dataset['test'],
         data_collator=data_collator,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)]
     )
     
     return trainer, model
@@ -834,9 +844,6 @@ class RealtimeFlowAVSE:
         self.window_size = int(window_size_ms * 16000 / 1000)
         self.overlap = overlap
         self.device = device
-        if phoneme_encoder is not None:
-            self.phoneme_encoder = phoneme_encoder.cpu()
-            self.phoneme_encoder.eval()
     
     @torch.no_grad()
     def denoise(self, noisy_audio: np.ndarray) -> np.ndarray:
