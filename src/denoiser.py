@@ -407,15 +407,23 @@ class FlowAVSEPhonemeConditioned(nn.Module):
         # Adapter for phoneme embeddings
         self.phoneme_adapter = phoneme_adapter
         
-        # Audio encoder/decoder
-        self.audio_encoder = AudioEncoder(num_layers=audio_encoder_layers)
-        self.audio_decoder = AudioDecoder(
-            in_channels=self.audio_encoder.out_channels,
-            num_layers=audio_encoder_layers
-        )
+        # # Audio encoder/decoder
+        # self.audio_encoder = AudioEncoder(num_layers=audio_encoder_layers)
+        # self.audio_decoder = AudioDecoder(
+        #     in_channels=self.audio_encoder.out_channels,
+        #     num_layers=audio_encoder_layers
+        # )
         
-        # Project encoded audio to d_model for attention
-        self.audio_projection = nn.Linear(self.audio_encoder.out_channels, d_model)
+        # # Project encoded audio to d_model for attention
+        # self.audio_projection = nn.Linear(self.audio_encoder.out_channels, d_model)
+        
+        self.waveform_encoder = nn.Sequential(
+            nn.Conv1d(1, 64, kernel_size=15, stride=1, padding=7),
+            nn.GELU(),
+            nn.Conv1d(64, 128, kernel_size=15, stride=1, padding=7),
+            nn.GELU(),
+            nn.Conv1d(128, d_model, kernel_size=15, stride=1, padding=7),
+        )
         
         # Time embedding for flow matching
         self.time_embedding = nn.Sequential(
@@ -431,7 +439,8 @@ class FlowAVSEPhonemeConditioned(nn.Module):
         ])
         
         # Output projection
-        self.output_projection = nn.Linear(d_model, self.audio_encoder.out_channels)
+        self.output_projection = nn.Linear(d_model, d_model) 
+        self.velocity_output = nn.Conv1d(d_model, 1, kernel_size=1)
         
         # Flow matching
         self.flow_matching = ConditionalFlowMatching()
@@ -489,18 +498,16 @@ class FlowAVSEPhonemeConditioned(nn.Module):
         
         # Encode noisy audio
         noisy_audio_2d = noisy_audio.unsqueeze(1)  # (batch, 1, time)
-        audio_encoded = self.audio_encoder(noisy_audio_2d)  # (batch, channels, reduced_time)
-        
+
         if return_loss and clean_audio is not None:
             # Training mode: Flow matching loss
             clean_audio_2d = clean_audio.unsqueeze(1)
-            clean_encoded = self.audio_encoder(clean_audio_2d)
-            
+
             # Sample time and compute flow
             t = self.flow_matching.sample_time(batch_size, device)
             xt, ut = self.flow_matching.compute_conditional_flow(
-                clean_encoded,
-                audio_encoded,
+                clean_audio_2d,
+                noisy_audio_2d,
                 t
             )
             
@@ -508,7 +515,7 @@ class FlowAVSEPhonemeConditioned(nn.Module):
             velocity_pred = self._predict_velocity(xt, t, phoneme_condition)
             
             # Flow matching loss
-            loss = F.mse_loss(velocity_pred, ut)
+            loss = F.l1_loss(velocity_pred, ut)
             
             return {
                 'loss': loss,
@@ -517,16 +524,14 @@ class FlowAVSEPhonemeConditioned(nn.Module):
             }
         else:
             # Inference mode: Sample from flow
-            denoised_encoded = self.flow_matching.sample_ode(
-                audio_encoded,
+            denoised_audio_2d = self.flow_matching.sample_ode(
+                noisy_audio_2d,
                 self._predict_velocity_wrapper(phoneme_condition),
                 phoneme_condition,
                 steps=50
             )
             
-            # Decode to audio
-            denoised_audio = self.audio_decoder(denoised_encoded)
-            denoised_audio = denoised_audio.squeeze(1)  # (batch, time)
+            denoised_audio = denoised_audio_2d.squeeze(1)  # (batch, time)
             
             return {
                 'denoised_audio': denoised_audio,
@@ -535,36 +540,65 @@ class FlowAVSEPhonemeConditioned(nn.Module):
     
     def _predict_velocity(
         self,
-        xt: torch.Tensor,
-        t: torch.Tensor,
-        phoneme_condition: torch.Tensor
+        xt: torch.Tensor,  # Now (batch, 1, time) raw waveform
+        t: torch.Tensor,   # (batch,) timestep
+        phoneme_condition: torch.Tensor  # (batch, time_cond, d_model)
     ) -> torch.Tensor:
         """
-        Predict velocity field for flow matching
+        Predict velocity field for flow matching on raw waveforms
         
         Args:
-            xt: (batch, channels, time) current state
+            xt: (batch, 1, time) current waveform state
             t: (batch,) timestep
-            phoneme_condition: (batch, time_cond, d_model)
+            phoneme_condition: (batch, time_cond, d_model) phoneme embeddings
+        
+        Returns:
+            velocity: (batch, 1, time) predicted velocity in waveform space
         """
         # Embed time
         t_emb = self.time_embedding(t.unsqueeze(-1))  # (batch, d_model)
         
-        # Project audio features to d_model
-        # xt: (batch, channels, time) -> (batch, time, channels)
-        xt_transposed = xt.transpose(1, 2)
-        audio_features = self.audio_projection(xt_transposed)  # (batch, time, d_model)
+        # Extract features from raw waveform using convolutions
+        # xt: (batch, 1, time) -> (batch, d_model, time)
+        waveform_features = self.waveform_encoder(xt)  # (batch, d_model, time)
         
-        # Add time embedding
-        audio_features = audio_features + t_emb.unsqueeze(1)
+        # Transpose to (batch, time, d_model) for transformer processing
+        waveform_features = waveform_features.transpose(1, 2)  # (batch, time, d_model)
         
-        # Apply cross-attention layers
+        # Add time embedding (broadcast across time dimension)
+        audio_features = waveform_features + t_emb.unsqueeze(1)  # (batch, time, d_model)
+        
+        # Downsample phoneme condition to match waveform temporal resolution
+        # Phoneme embeddings are typically ~50 fps, waveform is 16000 fps
+        # Need to upsample phoneme_condition or downsample audio_features
+        
+        # Option A: Interpolate phoneme condition to match waveform length
+        if phoneme_condition.shape[1] != audio_features.shape[1]:
+            # phoneme_condition: (batch, time_cond, d_model)
+            # Need to interpolate to (batch, time_waveform, d_model)
+            phoneme_condition = phoneme_condition.transpose(1, 2)  # (batch, d_model, time_cond)
+            phoneme_condition = F.interpolate(
+                phoneme_condition,
+                size=audio_features.shape[1],
+                mode='linear',
+                align_corners=False
+            )
+            phoneme_condition = phoneme_condition.transpose(1, 2)  # (batch, time_waveform, d_model)
+        
+        # Apply cross-attention layers between waveform and phoneme features
         for layer in self.cross_attention_layers:
             audio_features = layer(audio_features, phoneme_condition)
         
-        # Project back to audio space
-        velocity = self.output_projection(audio_features)  # (batch, time, channels)
-        velocity = velocity.transpose(1, 2)  # (batch, channels, time)
+        # Project back to waveform space
+        # audio_features: (batch, time, d_model) -> (batch, time, 1)
+        velocity = self.output_projection(audio_features)  # (batch, time, d_model)
+        
+        # Use a final 1x1 conv to map d_model -> 1 channel
+        velocity = velocity.transpose(1, 2)  # (batch, d_model, time)
+        
+        # Add a final projection layer (define in __init__):
+        # self.velocity_output = nn.Conv1d(d_model, 1, kernel_size=1)
+        velocity = self.velocity_output(velocity)  # (batch, 1, time)
         
         return velocity
     
