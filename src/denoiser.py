@@ -149,7 +149,7 @@ class ConditionalFlowMatching(nn.Module):
         xt = mu_t + sigma_t * noise
         
         # Target velocity: dx/dt = x_1 - x_0
-        ut = x1 - x0
+        ut = x0 - x1
         
         return xt, ut
     
@@ -658,16 +658,15 @@ class FlowAVSEDataCollator:
         phoneme_embeddings_list = []
         
         for feature in features:
-            audio = feature['audio']['array']
+            clean_audio = feature['clean']['array']
+            noisy_audio = feature['noisy']['array']
             
             # Apply windowing
-            windows = self._create_windows(audio)
+            clean_windows = self._create_windows(clean_audio)
+            noisy_windows = self._create_windows(noisy_audio)
             
-            for window in windows:
-                # Add noise augmentation
-                noisy_window = self.noise_augmentation.add_noise(window)
-                
-                clean_audios.append(window)
+            for clean_window, noisy_window in zip(clean_windows, noisy_windows):
+                clean_audios.append(clean_window)
                 noisy_audios.append(noisy_window)
                 
                 # Get phoneme embeddings (cached or computed)
@@ -762,9 +761,13 @@ def setup_flowavse_training(
     
     # Load dataset
     print("Loading dataset...")
-    dataset = load_dataset("kylelovesllms/timit_asr_ipa")
-    dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+    #dataset = load_dataset("kylelovesllms/timit_asr_ipa")
+    #dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
     
+    dataset = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k")
+    dataset = dataset.cast_column("noisy", Audio(sampling_rate=16000))
+    dataset = dataset.cast_column("clean", Audio(sampling_rate=16000))
+
     # Create data collator
     data_collator = FlowAVSEDataCollator(
         processor=processor,
@@ -783,10 +786,11 @@ def setup_flowavse_training(
         eval_strategy="steps",
         eval_steps=500,
         save_steps=1000,
+        save_total_limit=3,
         logging_steps=50,
         learning_rate=1e-4,
         warmup_steps=500,
-        max_steps=20000,
+        max_steps=10000,
         fp16=True,
         dataloader_num_workers=4,
         remove_unused_columns=False,
