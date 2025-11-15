@@ -208,7 +208,7 @@ class ConditionalFlowMatching(nn.Module):
             t = torch.ones(x.shape[0], device=x.device) * (1 - i * dt)
             
             # Predict velocity
-            v = model(x, t, phoneme_condition)
+            v = model(x, t) #, phoneme_condition)
             
             if method == 'euler':
                 x = x - dt * v
@@ -216,7 +216,7 @@ class ConditionalFlowMatching(nn.Module):
                 # Heun's method (2nd order)
                 x_temp = x - dt * v
                 t_next = t - dt
-                v_next = model(x_temp, t_next, phoneme_condition)
+                v_next = model(x_temp, t_next) #, phoneme_condition)
                 x = x - dt * (v + v_next) / 2
         
         return x
@@ -520,6 +520,7 @@ class FlowAVSEPhonemeConditioned(nn.Module):
             denoised_encoded = self.flow_matching.sample_ode(
                 audio_encoded,
                 self._predict_velocity_wrapper(phoneme_condition),
+                phoneme_condition,
                 steps=50
             )
             
@@ -899,6 +900,8 @@ class RealtimeFlowAVSE:
             outputs = self.model(window_tensor, return_loss=False)
             denoised_window = outputs['denoised_audio'].cpu().numpy()[0]
             
+            denoised_window = denoised_window[:self.window_size]
+
             denoised_chunks.append(denoised_window)
         
         # Overlap-add reconstruction
@@ -1165,9 +1168,11 @@ def main_inference():
     vocab = PhonemeVocabularyARPABET()
     processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
     
+    from safetensors.torch import load_file
+
     # Load phoneme encoder
     phoneme_encoder = HuBERTForPhonemeClassification(vocab_size=vocab.vocab_size)
-    phoneme_encoder.load_state_dict(torch.load(f"{PHONEME_ENCODER_PATH}/model.safetensors", weights_only=False))
+    phoneme_encoder.load_state_dict(load_file(f"{PHONEME_ENCODER_PATH}/model.safetensors"))
     
     # Load FlowAVSE model
     phoneme_adapter = PhonemeConditioningAdapter()
@@ -1176,7 +1181,7 @@ def main_inference():
         phoneme_adapter=phoneme_adapter,
         freeze_phoneme_encoder=True
     )
-    model.load_state_dict(torch.load(f"{FLOWAVSE_MODEL_PATH}/model.safetensors", weights_only=False))
+    model.load_state_dict(load_file(f"{FLOWAVSE_MODEL_PATH}/model.safetensors"))
     
     # Create inference pipeline
     inference_pipeline = RealtimeFlowAVSE(
@@ -1201,7 +1206,7 @@ def main_inference():
     print(f"Output length: {len(denoised_audio)} samples")
     
     # Save output
-    # torchaudio.save("denoised_speech.wav", torch.tensor(denoised_audio).unsqueeze(0), 16000)
+    torchaudio.save("denoised_speech.wav", torch.tensor(denoised_audio).unsqueeze(0), 16000)
     
     print("\nInference complete!")
 
