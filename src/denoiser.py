@@ -623,11 +623,12 @@ class FlowAVSEDataCollator:
         window_size_ms: int = 1000,  # Window size in milliseconds
         overlap: float = 0.2,
         sampling_rate: int = 16000,
-        use_cached_embeddings: bool = True,
+        use_cached_embeddings: bool = False,
         noise_augmentation: Optional[NoiseAugmentation] = None
     ):
         self.processor = processor
-        self.phoneme_encoder = phoneme_encoder
+        #self.phoneme_encoder = phoneme_encoder
+        self.phoneme_encoder = None
         self.vocab = vocab
         self.window_size = int(window_size_ms * sampling_rate / 1000)
         self.overlap = overlap
@@ -723,7 +724,7 @@ def setup_flowavse_training(
     phoneme_encoder_path: str,
     output_dir: str = "./flowavse_phoneme",
     window_size_ms: int = 1000,
-    use_cached_embeddings: bool = True,
+    use_cached_embeddings: bool = False,
     d_model: int = 512
 ):
     """Setup FlowAVSE training pipeline"""
@@ -731,7 +732,7 @@ def setup_flowavse_training(
     # Load vocabulary and processor
     vocab = PhonemeVocabularyARPABET()
     processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
-    /
+    
     # Load pre-trained phoneme encoder
     phoneme_encoder = HuBERTForPhonemeClassification(
         vocab_size=vocab.vocab_size
@@ -800,12 +801,11 @@ def setup_flowavse_training(
 class FlowAVSETrainer(Trainer):
     """Custom trainer for FlowAVSE"""
     
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=1):
         """Compute flow matching loss"""
         outputs = model(
             noisy_audio=inputs['noisy_audio'],
             clean_audio=inputs['clean_audio'],
-            phoneme_embeddings=inputs.get('phoneme_embeddings'),
             return_loss=True
         )
         
@@ -1084,7 +1084,7 @@ def main_train():
     PHONEME_ENCODER_PATH = "./final_model"  # Path to trained phoneme encoder
     OUTPUT_DIR = "./flowavse_phoneme_output"
     WINDOW_SIZE_MS = 1000  # 1 second windows
-    USE_CACHED_EMBEDDINGS = True
+    USE_CACHED_EMBEDDINGS = False
     D_MODEL = 512
     
     print(f"\nConfiguration:")
@@ -1130,7 +1130,7 @@ def main_inference():
     
     # Load phoneme encoder
     phoneme_encoder = HuBERTForPhonemeClassification(vocab_size=vocab.vocab_size)
-    phoneme_encoder.load_state_dict(torch.load(f"{PHONEME_ENCODER_PATH}/pytorch_model.bin"))
+    phoneme_encoder.load_state_dict(torch.load(f"{PHONEME_ENCODER_PATH}/model.safetensors", weights_only=False))
     
     # Load FlowAVSE model
     phoneme_adapter = PhonemeConditioningAdapter()
@@ -1139,7 +1139,7 @@ def main_inference():
         phoneme_adapter=phoneme_adapter,
         freeze_phoneme_encoder=True
     )
-    model.load_state_dict(torch.load(f"{FLOWAVSE_MODEL_PATH}/pytorch_model.bin"))
+    model.load_state_dict(torch.load(f"{FLOWAVSE_MODEL_PATH}/model.safetensors", weights_only=False))
     
     # Create inference pipeline
     inference_pipeline = RealtimeFlowAVSE(
