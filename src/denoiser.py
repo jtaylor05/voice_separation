@@ -211,13 +211,13 @@ class ConditionalFlowMatching(nn.Module):
             v = model(x, t) #, phoneme_condition)
             
             if method == 'euler':
-                x = x - dt * v
+                x = x + dt * v
             elif method == 'heun':
                 # Heun's method (2nd order)
-                x_temp = x - dt * v
-                t_next = t - dt
+                x_temp = x + dt * v
+                t_next = t + dt
                 v_next = model(x_temp, t_next) #, phoneme_condition)
-                x = x - dt * (v + v_next) / 2
+                x = x + dt * (v + v_next) / 2
         
         return x
 
@@ -236,7 +236,7 @@ class AudioEncoder(nn.Module):
         self,
         in_channels: int = 1,
         base_channels: int = 64,
-        num_layers: int = 6,
+        num_layers: int = 4,
         kernel_size: int = 4,
         stride: int = 2
     ):
@@ -1301,6 +1301,9 @@ def main_evaluation():
             output_snr = results['snr']
             results['snr_improvement'] = output_snr - input_snr
             
+            for key, value in results.items():
+                results[key] = float(value)
+
             all_results.append(results)
             
             # Print results for this sample
@@ -1349,12 +1352,12 @@ def main_evaluation():
         return
     
     avg_metrics = {
-        key: np.mean([r[key] for r in all_results])
+        key: float(np.mean([r[key] for r in all_results]))
         for key in all_results[0].keys()
     }
     
     std_metrics = {
-        key: np.std([r[key] for r in all_results])
+        key: float(np.std([r[key] for r in all_results]))
         for key in all_results[0].keys()
     }
     
