@@ -205,7 +205,7 @@ class ConditionalFlowMatching(nn.Module):
         x = x1.clone()
         
         for i in range(steps):
-            t = torch.ones(x.shape[0], device=x.device) * (1 - i * dt)
+            t = torch.ones(x.shape[0], device=x.device) * (i * dt)
             
             # Predict velocity
             v = model(x, t) #, phoneme_condition)
@@ -418,11 +418,13 @@ class FlowAVSEPhonemeConditioned(nn.Module):
         # self.audio_projection = nn.Linear(self.audio_encoder.out_channels, d_model)
         
         self.waveform_encoder = nn.Sequential(
-            nn.Conv1d(1, 64, kernel_size=15, stride=1, padding=7),
+            nn.Conv1d(1, 64, kernel_size=31, stride=2, padding=15),  # Larger kernel, downsample
             nn.GELU(),
-            nn.Conv1d(64, 128, kernel_size=15, stride=1, padding=7),
+            nn.Conv1d(64, 128, kernel_size=31, stride=2, padding=15),
             nn.GELU(),
-            nn.Conv1d(128, d_model, kernel_size=15, stride=1, padding=7),
+            nn.Conv1d(128, 256, kernel_size=31, stride=2, padding=15),
+            nn.GELU(),
+            nn.Conv1d(256, d_model, kernel_size=31, stride=2, padding=15),
         )
         
         # Time embedding for flow matching
