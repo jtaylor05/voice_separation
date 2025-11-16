@@ -517,7 +517,7 @@ class FlowAVSEPhonemeConditioned(nn.Module):
             velocity_pred = self._predict_velocity(xt, t, phoneme_condition)
             
             # Flow matching loss
-            loss = F.l1_loss(velocity_pred, ut)
+            loss = F.l1_loss(velocity_pred, ut) * 1000
             
             return {
                 'loss': loss,
@@ -603,10 +603,10 @@ class FlowAVSEPhonemeConditioned(nn.Module):
     
     def _predict_velocity_wrapper(self, phoneme_condition: torch.Tensor):
         """Create a wrapper function for ODE sampling"""
-        def predict(xt, t, condition):
-            return self._predict_velocity(xt, t, condition)
+        def predict(xt, t):
+            return self._predict_velocity(xt, t, phoneme_condition)
         
-        return lambda xt, t: predict(xt, t, phoneme_condition)
+        return predict
 
 
 # ============================================================================
