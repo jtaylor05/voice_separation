@@ -126,7 +126,7 @@ class ConditionalFlowMatching(nn.Module):
         """Variance-preserving schedule: σ_t = sqrt(t * (1-t)) * σ_max"""
         return torch.sqrt(t * (1 - t) + self.epsilon) * self.sigma_max
     
-    def compute_conditional_flow(
+    def _compute_conditional_flow(
         self,
         x0: torch.Tensor,  # Clean
         x1: torch.Tensor,  # Noisy
@@ -146,7 +146,7 @@ class ConditionalFlowMatching(nn.Module):
         
         return xt, ut
     
-    def _compute_conditional_flow(
+    def compute_conditional_flow(
         self,
         x0: torch.Tensor,  # Clean speech
         x1: torch.Tensor,  # Noisy speech
@@ -167,7 +167,7 @@ class ConditionalFlowMatching(nn.Module):
         t = t.view(-1, 1, 1)  # (batch, 1, 1)
         
         # OT path: x_t = (1-t)*x_0 + t*x_1 + sigma_t * noise
-        mu_t = (1 - t) * x0 + t * x1
+        mu_t = t * x0 + (1-t) * x1
         sigma_t = self.sigma_min
         
         # Sample noise
@@ -183,8 +183,7 @@ class ConditionalFlowMatching(nn.Module):
     def sample_ode(
         self,
         x1: torch.Tensor,  # Noisy speech
-        model: nn.Module,
-        phoneme_condition: torch.Tensor,
+        vel_model: nn.Module, 
         steps: int = 50,
         method: str = 'euler'
     ) -> torch.Tensor:
@@ -208,7 +207,7 @@ class ConditionalFlowMatching(nn.Module):
             t = torch.ones(x.shape[0], device=x.device) * (i * dt)
             
             # Predict velocity
-            v = model(x, t) #, phoneme_condition)
+            v = vel_model(x, t) #, phoneme_condition)
             
             if method == 'euler':
                 x = x + dt * v
@@ -216,7 +215,7 @@ class ConditionalFlowMatching(nn.Module):
                 # Heun's method (2nd order)
                 x_temp = x + dt * v
                 t_next = t + dt
-                v_next = model(x_temp, t_next) #, phoneme_condition)
+                v_next = vel_model(x_temp, t_next) #, phoneme_condition)
                 x = x + dt * (v + v_next) / 2
         
         return x
@@ -418,13 +417,13 @@ class FlowAVSEPhonemeConditioned(nn.Module):
         # self.audio_projection = nn.Linear(self.audio_encoder.out_channels, d_model)
         
         self.waveform_encoder = nn.Sequential(
-            nn.Conv1d(1, 64, kernel_size=31, stride=2, padding=15),  # Larger kernel, downsample
-            nn.GELU(),
-            nn.Conv1d(64, 128, kernel_size=31, stride=2, padding=15),
+            nn.Conv1d(1, 128, kernel_size=31, stride=2, padding=15),  # Larger kernel, downsample
             nn.GELU(),
             nn.Conv1d(128, 256, kernel_size=31, stride=2, padding=15),
             nn.GELU(),
-            nn.Conv1d(256, d_model, kernel_size=31, stride=2, padding=15),
+            nn.Conv1d(256, 512, kernel_size=31, stride=2, padding=15),
+            nn.GELU(),
+            nn.Conv1d(512, d_model, kernel_size=15, stride=1, padding=7),
         )
         
         # Time embedding for flow matching
@@ -444,6 +443,12 @@ class FlowAVSEPhonemeConditioned(nn.Module):
         self.output_projection = nn.Linear(d_model, d_model) 
         self.velocity_output = nn.Conv1d(d_model, 1, kernel_size=1)
         
+        self.velocity_output = nn.Conv1d(d_model, 1, kernel_size=1)
+        # Initialize with larger weights to match velocity magnitude
+        nn.init.xavier_normal_(self.velocity_output.weight, gain=3.0)
+        if self.velocity_output.bias is not None:
+            nn.init.zeros_(self.velocity_output.bias)
+
         # Flow matching
         self.flow_matching = ConditionalFlowMatching()
     
@@ -518,6 +523,11 @@ class FlowAVSEPhonemeConditioned(nn.Module):
             
             # Flow matching loss
             loss = F.l1_loss(velocity_pred, ut) * 1000
+
+            if False and self.training and torch.rand(1).item() < 0.01:  # 1% of batches
+                print(f"Velocity target magnitude: {ut.abs().mean().item():.4f}")
+                print(f"Velocity pred magnitude: {velocity_pred.abs().mean().item():.4f}")
+                print(f"Loss: {loss.item():.6f}")
             
             return {
                 'loss': loss,
@@ -529,8 +539,7 @@ class FlowAVSEPhonemeConditioned(nn.Module):
             denoised_audio_2d = self.flow_matching.sample_ode(
                 noisy_audio_2d,
                 self._predict_velocity_wrapper(phoneme_condition),
-                phoneme_condition,
-                steps=50
+                steps=100
             )
             
             denoised_audio = denoised_audio_2d.squeeze(1)  # (batch, time)
@@ -607,7 +616,6 @@ class FlowAVSEPhonemeConditioned(nn.Module):
             return self._predict_velocity(xt, t, phoneme_condition)
         
         return predict
-
 
 # ============================================================================
 # 6. DATA PREPROCESSING WITH NOISE AUGMENTATION
@@ -840,9 +848,9 @@ def setup_flowavse_training(
     # Training arguments
     training_args = TrainingArguments(
         output_dir=output_dir,
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=8,
         per_device_eval_batch_size=8,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=2,
         eval_strategy="steps",
         eval_steps=500,
         save_steps=1000,
@@ -1374,7 +1382,9 @@ def main_evaluation():
                 print(f"  Saved audio samples to {output_dir}/")
             except:
                 pass
-    
+    print(f"  Sample mean - Input: {noisy_audio[:min_len].mean():.4f}, Output: {denoised_audio_eval.mean():.4f}")
+    print(f"  Sample std  - Input: {noisy_audio[:min_len].std():.4f}, Output: {denoised_audio_eval.std():.4f}")
+    print(f"  Correlation: {np.corrcoef(noisy_audio[:min_len], denoised_audio_eval)[0,1]:.4f}") 
     # Calculate and display average metrics
     print("\n" + "="*70)
     print("OVERALL RESULTS")
