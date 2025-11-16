@@ -175,7 +175,7 @@ class ConditionalFlowMatching(nn.Module):
         xt = mu_t + sigma_t * noise
         
         # Target velocity: dx/dt = x_1 - x_0
-        ut = x0 - x1
+        ut = x0 - xt
         
         return xt, ut
     
@@ -184,7 +184,7 @@ class ConditionalFlowMatching(nn.Module):
         self,
         x1: torch.Tensor,  # Noisy speech
         vel_model: nn.Module, 
-        steps: int = 50,
+        steps: int = 10,
         method: str = 'euler'
     ) -> torch.Tensor:
         """
@@ -217,7 +217,8 @@ class ConditionalFlowMatching(nn.Module):
                 t_next = t + dt
                 v_next = vel_model(x_temp, t_next) #, phoneme_condition)
                 x = x + dt * (v + v_next) / 2
-        
+        final_change = (x - x1).abs().mean()
+        print(f"Total change from ODE: {final_change.item():.4f}")
         return x
 
 
