@@ -209,6 +209,9 @@ class ConditionalFlowMatching(nn.Module):
             # Predict velocity
             v = vel_model(x, t) #, phoneme_condition)
             
+            if i % 20 == 0:
+                print(f"Step {i}/{steps}: t={t[0].item():.3f}, v_magnitude={v.abs().mean().item():.4f}, x_magnitude={x.abs().mean().item():.4f}")
+            
             if method == 'euler':
                 x = x + dt * v
             elif method == 'heun':
@@ -613,7 +616,11 @@ class FlowAVSEPhonemeConditioned(nn.Module):
     
     def _predict_velocity_wrapper(self, phoneme_condition: torch.Tensor):
         """Create a wrapper function for ODE sampling"""
+        call_count = [0]  # Mutable to track calls
         def predict(xt, t):
+            call_count[0] += 1
+            if call_count[0] % 20 == 0:
+                print(f"Wrapper called {call_count[0]} times")
             return self._predict_velocity(xt, t, phoneme_condition)
         
         return predict
@@ -1263,7 +1270,7 @@ def main_evaluation():
     
     # Load test dataset
     print("\nLoading VoiceBank-DEMAND test dataset...")
-    dataset = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k", split="test")
+    dataset = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k", split="test")[0]
     
     # Initialize vocabulary and processor
     print("Loading model components...")
