@@ -112,7 +112,7 @@ class ConditionalFlowMatching(nn.Module):
     Uses Optimal Transport path for training
     """
     
-    def __init__(self, sigma_max : float = 0.5, sigma_min: float = 1e-4, epsilon : float = 1e-5):
+    def __init__(self, sigma_max : float = 0.5, sigma_min: float = 1e-4, epsilon : float = 1e-3):
         super().__init__()
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
@@ -175,7 +175,7 @@ class ConditionalFlowMatching(nn.Module):
         xt = mu_t + sigma_t * noise
         
         # Target velocity: dx/dt = x_1 - x_0
-        ut = x0 - xt
+        ut = x0 - xt #/ (1 - t + self.epsilon)
         
         return xt, ut
     
@@ -213,13 +213,13 @@ class ConditionalFlowMatching(nn.Module):
                 print(f"Step {i}/{steps}: t={t[0].item():.3f}, v_magnitude={v.abs().mean().item():.4f}, x_magnitude={x.abs().mean().item():.4f}")
             
             if method == 'euler':
-                x = x + dt * v
+                x = x + dt * v * 50
             elif method == 'heun':
                 # Heun's method (2nd order)
                 x_temp = x + dt * v
                 t_next = t + dt
                 v_next = vel_model(x_temp, t_next) #, phoneme_condition)
-                x = x + dt * (v + v_next) / 2
+                x = x + dt * (v + v_next) / 2 * 50
         final_change = (x - x1).abs().mean()
         print(f"Total change from ODE: {final_change.item():.4f}")
         return x
@@ -1270,7 +1270,9 @@ def main_evaluation():
     
     # Load test dataset
     print("\nLoading VoiceBank-DEMAND test dataset...")
-    dataset = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k", split="test")[0]
+    dataset = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k", split="test")
+
+    dataset = dataset.select(range(5))
     
     # Initialize vocabulary and processor
     print("Loading model components...")
